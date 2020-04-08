@@ -1,0 +1,10 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+---
+- name: This is a hello world Ansible Playbook
+  hosts: 127.0.0.1
+  tasks:
+    - name: Create a file called '/tmp/created_by_ansible.txt' with the content 'Hello world from Ansible!'.
+      copy:
+        content: Hello world from Ansible!
+        dest: /tmp/created_by_ansible.txt
