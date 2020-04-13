@@ -1,0 +1,53 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: Chef Recipe Execution on Windows
+description: This is a sample component that demonstrates how to download and execute a Chef recipe against a Windows server. This sample will install Chef using the Chef Software Install script. For more information about the installation script, review the documentation at https://docs.chef.io/packages/#chef-software-install-script.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallChef
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $source = 'https://omnitruck.chef.io/install.ps1'
+              Write-Host "Installing Chef using the installation script '$source'"
+              $null = . { Invoke-WebRequest -UseBasicParsing -Uri $source } | Invoke-Expression
+              install -channel stable
+      - name: RecipeDestination
+        action: ExecutePowerShell
+        onFailure: Abort
+        timeoutSeconds: 5
+        inputs:
+          commands:
+            - Join-Path -Path $env:TEMP -ChildPath 'recipe.rb'
+      - name: DownloadRecipe
+        action: S3Download
+        inputs:
+          - source: s3://<enter_s3_bucket_name_here>/<enter_s3_object_key_here>
+            destination: '{{ build.RecipeDestination.outputs.stdout }}'
+      - name: ApplyRecipe
+        action: ExecuteBinary
+        inputs:
+          path: C:\opscode\chef\bin\chef-client
+          arguments:
+            - '--local-mode'
+            - '{{ build.RecipeDestination.outputs.stdout }}'
+            - '--chef-license'
+            - 'accept-no-persist'
+      - name: Cleanup
+        action: ExecutePowerShell
+        onFailure: Abort
+        timeoutSeconds: 30
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              Write-Host "Deleting the file '{{build.RecipeDestination.outputs.stdout}}'"
+              $getItem = @{
+                  Path        = '{{build.RecipeDestination.outputs.stdout}}'
+                  ErrorAction = 'SilentlyContinue'
+              }
+              Get-Item @getItem | Remove-Item -Force

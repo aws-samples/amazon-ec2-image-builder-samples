@@ -1,0 +1,42 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: Chef Client Execution on Linux
+description: This is a sample component that demonstrates how to download and execute a Chef recipe against a Linux server. This sample will install Chef using the Chef Software Install script. For more information about the installation script, review the documentation at https://docs.chef.io/packages/#chef-software-install-script.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallChefClient
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              if [ -x "$(command -v chef-client)" ]; then
+                echo "The Chef is already installed."
+              else
+                echo "Installing Chef..."
+                SCRIPT=/tmp/chef_install.sh
+                curl -s -L https://omnitruck.chef.io/install.sh -o $SCRIPT
+                chmod u+x $SCRIPT
+                sudo $SCRIPT -c stable
+                rm $SCRIPT
+              fi
+      - name: DownloadRecipe
+        action: S3Download
+        inputs:
+          - source: s3://<enter_s3_bucket_name_here>/<enter_s3_object_key_here>
+            destination: /tmp/recipe.rb
+      - name: ApplyRecipe
+        action: ExecuteBinary
+        inputs:
+          path: chef-client
+          arguments:
+            - '--local-mode'
+            - '{{ build.DownloadRecipe.inputs[0].destination }}'
+            - '--chef-license'
+            - 'accept-no-persist'
+      - name: DeleteRecipe
+        action: ExecuteBash
+        inputs:
+          commands:
+            - rm {{ build.DownloadRecipe.inputs[0].destination }}
