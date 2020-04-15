@@ -1,6 +1,6 @@
 # Chef Client Execution on Linux
 
-This is a sample component that demonstrates how to download and execute a Chef recipe against a Linux server. This sample will install Chef using the Chef Software Install script. For more information about the installation script, review the [documentation](https://docs.chef.io/packages/#chef-software-install-script).
+This is a sample component that demonstrates how to download and execute a Chef recipe against a Linux server. This sample will install Chef using the Chef Software Install script. For more information about the installation script, review the Chef [documentation](https://docs.chef.io/packages/#chef-software-install-script).
 
 ## Walkthrough
 
