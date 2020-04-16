@@ -12,11 +12,12 @@ phases:
           commands:
             - |
               if [ -x "$(command -v chef-client)" ]; then
-                echo "The Chef is already installed."
+                echo "Chef is already installed."
               else
-                echo "Installing Chef..."
+                SOURCE=https://omnitruck.chef.io/install.sh
                 SCRIPT=/tmp/chef_install.sh
-                curl -s -L https://omnitruck.chef.io/install.sh -o $SCRIPT
+                echo "Installing Chef using the installation script '$SOURCE'"
+                curl -s -L $SOURCE -o $SCRIPT
                 chmod u+x $SCRIPT
                 sudo $SCRIPT -c stable
                 rm $SCRIPT
