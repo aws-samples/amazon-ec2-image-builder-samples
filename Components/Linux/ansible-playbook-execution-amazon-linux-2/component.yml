@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
-name: Ansible Playbook Execution on Amazon Linux 2
-description: This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.
+name: 'Ansible Playbook Execution on Amazon Linux 2'
+description: 'This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.'
 schemaVersion: 1.0
 phases:
   - name: build
@@ -10,18 +10,12 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - |
-              if [ -x "$(command -v ansible-playbook)" ]; then
-                echo "Ansible is already installed."
-              else
-                echo "Installing Ansible..."
-                sudo amazon-linux-extras install -y ansible2
-              fi
+           - sudo amazon-linux-extras install -y ansible2
       - name: DownloadPlaybook
         action: S3Download
         inputs:
-          - source: s3://<enter_s3_bucket_name_here>/<enter_s3_object_key_here>
-            destination: /tmp/playbook.yml
+          - source: 's3://mybucket/playbooks/my-playbook.yml'
+            destination: '/tmp/my-playbook.yml'
       - name: InvokeAnsible
         action: ExecuteBinary
         inputs:
@@ -32,4 +26,18 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - rm {{ build.DownloadPlaybook.inputs[0].destination }}
+            - rm '{{ build.DownloadPlaybook.inputs[0].destination }}'
+  - name: validate
+    steps:
+      - name: ValidateResponse
+        action: ExecuteBash
+        inputs:
+          commands:
+            - curl -s http://127.0.0.1 | grep "Hello world from EC2 Image Builder and Ansible"
+  - name: test
+    steps:
+      - name: ValidateResponse
+        action: ExecuteBash
+        inputs:
+          commands:
+            - curl -s http://127.0.0.1 | grep "Hello world from EC2 Image Builder and Ansible"

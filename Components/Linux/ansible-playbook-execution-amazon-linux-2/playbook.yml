@@ -1,10 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 ---
-- name: This is a hello world Ansible Playbook
+- name: Apache Hello World
   hosts: 127.0.0.1
+  gather_facts: false
+  connection: local
   tasks:
-    - name: Create a file called '/tmp/created_by_ansible.txt' with the content 'Hello world from Ansible!'.
-      copy:
-        content: Hello world from Ansible!
-        dest: /tmp/created_by_ansible.txt
+    - name: Install Apache
+      yum:
+        name: httpd
+        state: latest
+    - name: Create a default page
+      shell: echo "<h1>Hello world from EC2 Image Builder and Ansible</h1>" > /var/www/html/index.html
+    - name: Enable Apache
+      service: name=httpd enabled=yes state=started
