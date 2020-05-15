@@ -1,0 +1,53 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  AnsiblePlaybookSample:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: ansible-playbook-sample
+      Description: This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.
+      Platform: Linux
+      Version: '1.0.0'
+      Data: |
+        name: 'Ansible Playbook Execution on Amazon Linux 2'
+        description: 'This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallAnsible
+                action: ExecuteBash
+                inputs:
+                  commands:
+                  - sudo amazon-linux-extras install -y ansible2
+              - name: DownloadPlaybook
+                action: S3Download
+                inputs:
+                  - source: 's3://mybucket/playbooks/my-playbook.yml'
+                    destination: '/tmp/my-playbook.yml'
+              - name: InvokeAnsible
+                action: ExecuteBinary
+                inputs:
+                  path: ansible-playbook
+                  arguments:
+                    - '{{ build.DownloadPlaybook.inputs[0].destination }}'
+              - name: DeletePlaybook
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - rm '{{ build.DownloadPlaybook.inputs[0].destination }}'
+          - name: validate
+            steps:
+              - name: ValidateResponse
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - curl -s http://127.0.0.1 | grep "Hello world from EC2 Image Builder and Ansible"
+          - name: test
+            steps:
+              - name: ValidateResponse
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - curl -s http://127.0.0.1 | grep "Hello world from EC2 Image Builder and Ansible"
