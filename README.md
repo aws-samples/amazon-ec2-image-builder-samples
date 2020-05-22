@@ -8,6 +8,10 @@ This repository contains samples that demonstrate various aspects of the [Amazon
 
 The ```Components``` folder will hold sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
 
+### CloudFormation
+
+The ```CloudFormation``` folder contains sample EC2 Image Builder CloudFormation templates. These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS accounts using CloudFormation.
+
 ## Additional Learning Resources
 
 ### Links
