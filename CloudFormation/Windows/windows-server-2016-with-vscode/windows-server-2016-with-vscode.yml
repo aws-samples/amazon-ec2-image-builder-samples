@@ -1,0 +1,135 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  # The Image resource will show complete in CloudFormation once your image is done building.
+  # Use this resource later in your stack to reference the image in other resources.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html
+  WindowServer2016WithVisualStudioCode:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      ImageRecipeArn:
+        Ref: WindowsServer2016ImageRecipe
+      InfrastructureConfigurationArn:
+        Ref: WindowsServer2016ImageInfrastructureConfiguration
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
+  WindowsServer2016ImageInfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: WindowsServer-2016-VSCode-Image-Infrastructure-Configuration
+      InstanceProfileName:
+        Ref: InstanceProfile
+
+  # Recipe which references the latest (x.x.x) version of Windows Server 2016 English AMI with Desktop Experience).
+  WindowsServer2016ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: Windows_Server-2016-VisualStudioCode
+      Version: 0.0.1
+      # ${AWS::Partition} returns the partition where you are running the CloudFormation template. For standard AWS regions, the partition
+      # is aws. For resources elsewhere, the partition is aws-partitionname. For example, China (Beijing and Ningxia) regions use aws-cn and
+      # AWS GovCloud (US) regions are aws-us-gov.
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html
+      ParentImage:
+        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2016-english-full-base-x86/x.x.x
+      Components:
+        - ComponentArn:
+            Ref: VisualStudioCodeComponent
+
+  # Creates a custom EC2 Image Builder component that downloads and installs Visual Studio Code
+  VisualStudioCodeComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: VisualStudioCode
+      Version: 0.0.1
+      Description: Install Visual Studio Code
+      ChangeDescription: First version
+      Platform: Windows
+      Data: |
+        name: InstallVSCode
+        description: Downloads and Installs Visual Studio Code
+        schemaVersion: 1.0
+
+        phases:
+          - name: build
+            steps:
+              - name: VSCodeInstall
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      # Set TLS 1.2 for Invoke-RestMethod
+                      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+                      # Set the download link to Visual Studio Code (64-bit installer)
+                      $downloadUrl = "https://go.microsoft.com/fwlink/?Linkid=852157"
+
+                      # Set the path for our download, which will be in the temp directory
+                      $installerFile = "vscode-install.exe"
+                      $installerDownloadPath = (Join-Path $env:TEMP $installerFile)
+
+                      # Set Install Options
+                      # Include the context menu, file association, and add to path options (and don't run code after install:
+                      $installerArguments = '/verysilent /mergetasks=!runcode,addcontextmenufiles,addcontextmenufolders,associatewithfiles,addtopath'
+
+                      # Download the file
+                      Invoke-Webrequest $downloadUrl -UseBasicParsing -OutFile $installerDownloadPath
+
+                      # Install
+                      Start-Process $installerDownloadPath -ArgumentList $installerArguments -Wait
+
+                      # Cleanup
+                      Remove-Item $installerDownloadPath -Force
+
+          - name: validate
+            steps:
+              - name: VSCodeValidate
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      if (code --version) { return $true }
+
+          - name: test
+            steps:
+              - name: VSCodeTest
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      if (code --version) { return $true }
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /executionServiceEC2Role/
+
+  # To pass the InstanceRole above to an EC2 instance, we need an InstanceProfile.
+  # Learn more about instance profiles:
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+      - Ref: InstanceRole
