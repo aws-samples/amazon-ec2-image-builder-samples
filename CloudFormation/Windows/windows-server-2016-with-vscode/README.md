@@ -1,6 +1,6 @@
 # Windows Server 2016 Image with Visual Studio Code Installed
 
-This is a sample CloudFormation template that demonstrates how to use the [AWS::ImageBuilder::Image resource](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html) to build a Windows Server 2016 Amazon Machine Image (AMI) with Visual Studio Code installed.
+This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build a Windows Server 2016 Amazon Machine Image (AMI) with Visual Studio Code installed.
 
 ## How this Stack Works
 
@@ -10,7 +10,9 @@ Next, an [AWS::ImageBuilder::InfrastructureConfiguration](https://docs.aws.amazo
 
 To install Visual Studio Code, we use a custom [AWS::ImageBuilder::Component](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html) with the PowerShell commands that download and install the application. The Component includes a simple validation step, along with a test step. This ensures Visual Studio Code is installed and can be run from the PowerShell command line.
 
-Finally, the [AWS::ImageBuilder::ImageRecipe]()
+The [AWS::ImageBuilder::ImageRecipe](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html) ties together the Windows Server 2016 parent image and the Visual Studio Code component.
+
+Finally, the [AWS::ImageBuilder::Image] represents the image build version.
 
 ## Walkthrough
 
