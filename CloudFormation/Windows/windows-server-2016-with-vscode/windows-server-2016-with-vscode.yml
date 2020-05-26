@@ -91,7 +91,10 @@ Resources:
                 inputs:
                   commands:
                     - |
-                      if (code --version) { return $true }
+                      if (-not Test-Path (Join-Path $env:ProgramFiles "Microsoft VS Code\Code.exe"))
+                      {
+                        exit 1
+                      }
 
           - name: test
             steps:
@@ -100,7 +103,13 @@ Resources:
                 inputs:
                   commands:
                     - |
-                      if (code --version) { return $true }
+                      try {
+                        code --version
+                      }
+                      catch
+                      {
+                        exit 1
+                      }
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
