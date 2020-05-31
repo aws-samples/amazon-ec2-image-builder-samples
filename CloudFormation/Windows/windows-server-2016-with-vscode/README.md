@@ -24,7 +24,7 @@ The [AWS::ImageBuilder::ImageRecipe](https://docs.aws.amazon.com/AWSCloudFormati
 
 The [AWS::ImageBuilder::Image](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html) represents the image we have built.
 
-Finally, we will use the Image resource to create an [AWS::SSM::Parameter](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html) which will have the image id as the value. We could just as easily have updated a Launch Configuration for an Auto Scaling Group, or pass the attribute to other CloudFormation resources which reference an AMIs Image Id.
+Finally, we will use the Image resource to create an [AWS::SSM::Parameter](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html) which will have the image id as the value. We could just as easily have updated a Launch Configuration for an Auto Scaling Group, or passed the attribute to other CloudFormation resources which reference an AMIs Image Id.
 
 ## Walkthrough
 
