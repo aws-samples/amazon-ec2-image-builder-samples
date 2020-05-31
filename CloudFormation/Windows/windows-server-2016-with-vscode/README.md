@@ -2,7 +2,7 @@
 
 This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build a Windows Server 2016 Amazon Machine Image (AMI) with Visual Studio Code installed.
 
-This template works in standard, China, and GovCloud (US) regions.
+This template works in standard and GovCloud (US) regions.
 
 ***Internet connectivity is required in your default VPC*** to download Visual Studio Code installation files. If you do not have a default VPC, you will need to specify a subnet ID in the infrastructure configuration section of the CloudFormation template.
 
