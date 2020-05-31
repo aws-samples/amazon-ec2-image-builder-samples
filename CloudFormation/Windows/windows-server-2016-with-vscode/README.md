@@ -2,9 +2,19 @@
 
 This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build a Windows Server 2016 Amazon Machine Image (AMI) with Visual Studio Code installed.
 
+This template works in standard, China, and GovCloud (US) regions.
+
+***Internet connectivity is required in your default VPC*** to download Visual Studio Code installation files. If you do not have a default VPC, you will need to specify a subnet ID in the infrastructure configuration section of the CloudFormation template.
+
 ## How this Stack Works
 
-By default, AWS Services do not have permission to perform actions on your instances. So, first the stack will create an [AWS::IAM::Role](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html) resource which grants AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image. Then, an [AWS::IAM::InstanceProfile](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-instanceprofile.html) is created, which passes the instance role to the EC2 instance.
+First, the stack will create an [AWS::S3::Bucket](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html) resource that we will use to capture logs.
+
+By default, AWS Services do not have permission to perform actions on your instances. So, the stack will create an [AWS::IAM::Role](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html) which grants AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
+
+The instance also needs access to the bucket created by the stack, so we will add a policy to the newly created role, which will allow the instance to use ```s3:PutObject``` to save logs to our logging bucket.
+
+Then, an [AWS::IAM::InstanceProfile](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-instanceprofile.html) is created, which passes the instance role to the EC2 instance.
 
 Next, an [AWS::ImageBuilder::InfrastructureConfiguration](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html) resource is created, and the Instance Profile is specified as one of its parameters. This is what tells EC2 Image Builder to use that profile with the EC2 Instance during the build.
 
@@ -16,10 +26,24 @@ Finally, the [AWS::ImageBuilder::Image](https://docs.aws.amazon.com/AWSCloudForm
 
 ## Walkthrough
 
-1. Upload the ```windows-server-2016-with-vscode.yml``` template to CloudFormation, and watch the stack build. Expect it to take approximately 30 minutes to complete.
-2. The AWS::ImageBuilder::Image resource ```WindowServer2016WithVisualStudioCode``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` once it is done.
+The stack should take approximately 30 minutes to complete.
+
+1. Upload the ```windows-server-2016-with-vscode.yml``` template to CloudFormation.
+2. You will see a checkbox informing you that the stack creates IAM resources, read and check the box.
+3. Watch the stack build.
+4. Note the AWS::ImageBuilder::Image resource ```WindowServer2016WithVisualStudioCode``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` once it is done.
+
+## Troubleshooting
+
+While the stack is building, you will see an EC2 instance running which is the build instance. There will also be AWS Systems Manager (SSM) Automation runningm, you can watch this
+automation to see the steps EC2 Image Builder is taking to build your image.
+
+If the stack fails, check the CloudFormation events which should include a description of any failed resources.
 
 ## Cleanup
 
-1. To delete the resources created by the stack, you can delete the stack in the CloudFormation console, or using the CLI/SDK.
-2. For any AMIs created by the stack, you'll need to delete those by using the EC2 console, CLI, or SDK (Deleting the CloudFormation stack will NOT delete the AMIs created by the stack).
+To delete the resources created by the stack:
+
+1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack delete will fail). To keep the bucket, add ```retain``` to the bucket's CloudFormation.
+2. Delete the stack in the CloudFormation console, or using the CLI/SDK.
+3. For any AMIs created by the stack, you'll need to delete those by using the EC2 console, CLI, or SDK (Deleting the CloudFormation stack will NOT delete the AMIs created by the stack).
