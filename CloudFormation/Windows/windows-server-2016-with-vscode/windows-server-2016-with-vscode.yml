@@ -75,15 +75,14 @@ Resources:
       Name: WindowsServer-2016-VSCode-Image-Infrastructure-Configuration
       InstanceProfileName:
         Ref: InstanceProfile
-      # (Optional) Properties which can help with troubleshooting.
-      # Specify an S3 bucket and EC2 Image Builder will save logs to the buck.
+      # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
       Logging:
         S3Logs:
           S3BucketName:
             Ref: ImageBuilderLogBucket
           # S3KeyPrefix: 'my-imagebuilder-bucket-prefix'
       # If you would like to keep the instance running after a failed build, set TerminateInstanceOnFailure to false.
-      # TerminateInstanceOnFailure: true
+      # TerminateInstanceOnFailure: false
       # If you do not have a default VPC or want to use a different VPC, you must specify the subnet ID to use
       # SubnetId: 'subnet-id'
 
@@ -191,7 +190,7 @@ Resources:
       InfrastructureConfigurationArn:
         Ref: WindowsServer2016ImageInfrastructureConfiguration
 
-  # Create an SSM Parameter Store entry with our resulting image id.
+  # Create an SSM Parameter Store entry with our resulting ImageId.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html
   WindowServer2016WithVisualStudioCodeParameter:
     Type: AWS::SSM::Parameter
