@@ -45,6 +45,6 @@ If the stack fails, check the CloudFormation events. These events include a desc
 
 To delete the resources created by the stack:
 
-1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack delete will fail). To keep the bucket, add ```retain``` to the bucket's CloudFormation resource.
+1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html for more information on ```DeletionPolicy``` attributes.
 2. Delete the stack in the CloudFormation console, or by using the CLI/SDK.
 3. You must delete any AMIs created by the stack. You can use the EC2 console, CLI, or SDK to delete the AMIs. Note that deleting the CloudFormation stack will NOT delete the AMIs created by the stack.
