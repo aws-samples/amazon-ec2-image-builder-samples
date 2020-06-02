@@ -10,7 +10,7 @@ The ```CloudFormation``` folder contains sample EC2 Image Builder CloudFormation
 
 ### Components
 
-The ```Components``` folder will hold sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
+The ```Components``` contains sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
 
 ## Additional Learning Resources
 
