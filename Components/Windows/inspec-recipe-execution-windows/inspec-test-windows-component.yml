@@ -1,0 +1,66 @@
+name: InSpec_Windows_2016
+description: 'This document will install and run InSpec test cases for Windows Server 2016'
+schemaVersion: 1.0
+phases:
+  -
+    name: test
+    steps:
+      - name: Create_Working_Directory
+        action: CreateFolder
+        onFailure: Abort
+        inputs:
+          - path: 'C:\inspec_test'
+
+      - name: Download_InSpec_Installer
+        action: S3Download
+        timeoutSeconds: 60
+        onFailure: Abort
+        maxAttempts: 1
+        inputs:
+          -
+            source: 's3://<S3_PATH_TO_INSPEC_INSTALLER.MSI>'
+            destination: 'C:\inspec_test\inspec.msi'
+
+      - name: Install_InSpec
+        action: ExecutePowerShell
+        onFailure: Abort
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $ProgressPreference = 'SilentlyContinue'
+              Start-Process C:\inspec_test\inspec.msi -Wait -ArgumentList '/quiet'
+
+      - name: Download_InSpec_Tests
+        action: S3Download
+        timeoutSeconds: 60
+        onFailure: Abort
+        maxAttempts: 1
+        inputs:
+          -
+            source: 's3://<S3_PATH_TO_INSPEC_TEST.RB>'
+            destination: 'C:\inspec_test\test_cases.rb'
+
+      - name: Run_InSpec_Tests
+        action: ExecutePowerShell
+        timeoutSeconds: 300
+        onFailure: Abort
+        maxAttempts: 1
+        inputs:
+          commands:
+            - |
+              $dateTime = Get-Date -Format FileDateTime
+              $reportS3Bucket = "<S3_BUCKET_NAME_REPORT_OUTPUT>"
+              $reportS3BucketKey = "inspec_test_results"
+              $reportFileName = "inspec_report_${dateTime}.html"
+              $reportOutputDirectory = "C:\inspec_test\output"
+
+              $startProcess = @{
+                  FilePath     = "C:\opscode\inspec\bin\inspec.bat"
+                  ArgumentList = @('exec C:\inspec_test\test_cases.rb', '--chef-license accept-silent', '--no-distinct-exit', "--reporter html:${reportOutputDirectory}/${reportFileName}")
+                  Wait         = $true
+                  PassThru     = $true
+              }
+              $process = Start-Process @startProcess
+              Write-S3Object -BucketName $reportS3Bucket -Key "${reportS3BucketKey}/${reportFileName}" -File "${reportOutputDirectory}\${reportFileName}"
+              exit $process.ExitCode
