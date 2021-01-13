@@ -1,0 +1,24 @@
+name: Scan linux-based images using Orca Security API
+description: This is a test component that uses Orca Security API to scan and detect known vulnerabilities on linux-based images.
+schemaVersion: 1.0
+
+phases:
+  - name: test
+    steps:
+      - name: DownloadFiles
+        action: S3Download
+        inputs:
+          - source: s3://<enter_s3_bucket_name_here>/<enter_path_to_folder_here>/*
+            destination: /tmp/
+      - name: AddPermissions
+        action: ExecuteBash
+        inputs:
+          commands:
+            - cd {{ test.DownloadFiles.inputs[0].destination }}
+            - chmod +x *
+      - name: RunOrcaScan
+        action: ExecuteBash
+        inputs:
+          commands:
+            - ./orca_scan_test.sh --api-key <enter_api_key_here>
+
