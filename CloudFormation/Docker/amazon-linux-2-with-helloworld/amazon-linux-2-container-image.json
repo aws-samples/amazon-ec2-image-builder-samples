@@ -1,0 +1,18 @@
+[
+    {
+      "ParameterKey": "CustomSubnetId",
+      "ParameterValue": ""
+    },
+    {
+      "ParameterKey": "CustomSecurityGroupId",
+      "ParameterValue": ""
+    },
+    {
+      "ParameterKey": "BuildInstanceType",
+      "ParameterValue": "t2.micro"
+    },
+    {
+      "ParameterKey": "TargetECRRepositoryName",
+      "ParameterValue": "sample-repository"
+    }
+  ]
