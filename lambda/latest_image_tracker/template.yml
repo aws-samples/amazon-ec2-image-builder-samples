@@ -24,7 +24,7 @@ Resources:
           Properties:
             Topic: !Ref ImageBuilderSNSTopic
       Policies:
-          - arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - Version: '2012-10-17'
             Statement:
               - Effect: Allow
