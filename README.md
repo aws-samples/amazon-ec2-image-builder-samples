@@ -31,8 +31,6 @@ The ```CloudFormation``` folder contains sample CloudFormation templates in yaml
 1. The codepipeline-cfn.yml template will create CodeCommit repository and CodePipeline pipeline. 
 2. The second template file ib_builder.yml is what you commit to your Git repository. When you commit this file, it will launch a 2nd CloudFormation stack that kick-starts EC2 Image Builder pipeline for golden AMI creation. 
 
-These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS accounts using CloudFormation.
-
 
 ## Additional Learning Resources
 
@@ -40,10 +38,9 @@ These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS 
 
 * [Amazon EC2 Image Builder](https://aws.amazon.com/image-builder/)
 * [EC2 Image Builder Documentation](https://docs.aws.amazon.com/imagebuilder/)
-  * [EC2 Image Builder User Guide](https://docs.aws.amazon.com/imagebuilder/latest/userguide/index.html)
-  * [EC2 Image Builder API Reference](https://docs.aws.amazon.com/imagebuilder/latest/APIReference/index.html)
-  * [EC2 Image Builder CLI Reference](https://docs.aws.amazon.com/cli/latest/reference/imagebuilder/index.html)
-  * [EC2 Image Builder CloudFormation Reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/AWS_ImageBuilder.html)
+* [AWS CodeCommit](https://aws.amazon.com/codecommit/)
+* [AWS CodePipeline](https://aws.amazon.com/codepipeline/)
+* [EC2 Image Builder CloudFormation Reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/AWS_ImageBuilder.html)
 
 
 ## License
