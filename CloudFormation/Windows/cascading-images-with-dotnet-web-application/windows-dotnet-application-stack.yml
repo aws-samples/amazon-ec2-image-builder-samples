@@ -1,0 +1,518 @@
+---
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a Windows Server 2019 image running a .NET web application. The pipeline, by default, is scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
+
+Parameters:
+  CustomSubnetId:
+    Type: String
+    Default: ""
+    Description: If you do not have a default VPC, or want to use a different VPC, specify the ID of a subnet in which to place the instance used to customize your EC2 container image. If not specified, a subnet from your default VPC will be used.
+
+  CustomSecurityGroupId:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Required if you specified a custom subnet ID. Comma-delimited list of one or more IDs of security groups belonging to the VPC to associate with the instance used to customize your EC2 container image.
+
+  ResourceName:
+    Type: String
+    Default: DotnetWebsite
+    Description: A name to use for all Image Builder resources
+
+  ResourceVersion:
+    Type: String
+    Default: '1.0.0'
+    Description: The version to use for Image Builder resources
+
+  DotnetS3SourceZipFile:
+    Type: String
+    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+
+  DotnetBinaryName:
+    Type: String
+    Default: 'hellosample-web-application.exe'
+    Description: The .NET binary file to execute. This file must exist within the root of the zip file referenced in `DotnetS3SourceZipFile`.
+
+  TCPPort:
+    Type: String
+    Default: '5000'
+    Description: The TCP Port for the .NET web application. This should match the port configured in the .NET web application.
+
+  WebsiteName:
+    Type: String
+    Default: 'DotnetWebsiteDemo'
+    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+
+  HTMLTitleValidationString:
+    Type: String
+    Default: 'Home page - hello_powershell_summit'
+    Description: A string that should exist between the HTML <Title> and </Title> tags. This string is used for validating the website is available.
+
+Conditions:
+  UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
+
+Resources:
+  # Create an S3 Bucket for logs.
+  # When deleting the stack, make sure to empty the bucket first.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
+    # DeletionPolicy: Retain
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by EC2 instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        # The S3 policy is used to download the zip file from the provided S3 URI.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3ReadOnlyAccess'
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /executionServiceEC2Role/
+
+  # Policy to allow the instance to write to the S3 bucket (via instance role / instance profile).
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-policy.html
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      Comment: Allows the instance to save log files to an S3 bucket.
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - Ref: InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  # To pass the InstanceRole to an EC2 instance, we need an InstanceProfile.
+  # This profile will be used during the image build process.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - Ref: InstanceRole
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
+  Infrastructure:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: 'This infrastructure configuration will launch into the CloudFormation parameter provided VPC.'
+      InstanceProfileName: !Ref InstanceProfile
+      # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+          S3KeyPrefix: !Sub 'imagebuilder-${AWS::StackName}'
+      # If you would like to keep the instance running after a failed build, set TerminateInstanceOnFailure to false.
+      # TerminateInstanceOnFailure: false
+      # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
+      # security groups to be associated with the build instance.
+      SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds:
+        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # This sample will install the .NET web application as a Windows service. NSSM is a common utility used
+  # to install custom applications as a Windows service. This component will download and install NSSM. It
+  # will also update the `Path` environment variable.
+  NSSMInstallationComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${ResourceName}-NSSM'
+      Version: !Ref ResourceVersion
+      Platform: Windows
+      Description: NSSM can be used to create a custom Windows Service. This component will download and install NSSM. The `Path` environment variable will also be updated.
+      ChangeDescription: 'Created with CloudFormation'
+      Data: !Sub |
+        schemaVersion: 1.0
+        constants:
+          - Application:
+              type: string
+              value: NSSM
+          - Source:
+              type: string
+              value: https://nssm.cc/release/nssm-2.24.zip
+        phases:
+          - name: build
+            steps:
+              - name: ZipFile
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $filename = '{{ Source }}'.split('/')[-1]
+                    - Join-Path -Path $env:TEMP -ChildPath $filename
+              - name: TemporaryPath
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - Join-Path -Path $env:TEMP -ChildPath '{{ Application }}'
+              - name: InstallPath
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - Join-Path -Path $env:ProgramFiles -ChildPath '{{ Application }}'
+              - name: DownloadNSSM
+                action: WebDownload
+                inputs:
+                  - source: '{{ Source }}'
+                    destination: '{{ build.ZipFile.outputs.stdout }}'
+                    overwrite: true
+              - name: ExtractNSSMZipFile
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $ErrorActionPreference = 'Stop'
+                    - $ProgressPreference = 'SilentlyContinue'
+                    - Write-Host "Extracting '{{ build.ZipFile.outputs.stdout }}' to '{{ build.TemporaryPath.outputs.stdout }}'..."
+                    - Expand-Archive -Path '{{ build.ZipFile.outputs.stdout }}' -DestinationPath '{{ build.TemporaryPath.outputs.stdout }}' -Force
+              - name: NSSMExtractedSource
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $ErrorActionPreference = 'Stop'
+                    - (Get-ChildItem -Path '{{ build.TemporaryPath.outputs.stdout }}' | Where-Object {$_.Name -like 'nssm*'} | Select-Object -First 1).FullName
+              - name: MoveSourceToDesiredInstallationFolder
+                action: MoveFolder
+                inputs:
+                  - source: '{{ build.NSSMExtractedSource.outputs.stdout }}'
+                    destination: '{{ build.InstallPath.outputs.stdout }}'
+                    overwrite: true
+              - name: UpdatePath
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      $ErrorActionPreference = 'Stop'
+                      $currentPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+                      $separator = [System.IO.Path]::PathSeparator
+                      $addition = 'C:\Program Files\NSSM\win64'
+                      $newPath = '{0}{1}{2}' -f $currentPath, $separator, $addition
+                      [Environment]::SetEnvironmentVariable('Path', $newPath, [EnvironmentVariableTarget]::Machine)
+              - name: RebootForPathUpdate
+                action: Reboot
+
+  # This component will download the .NET web application from the provided S3 URI. The application will
+  # be extracted to disk, and installed as a Windows service using NSSM.
+  WebsiteInstallationComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${ResourceName}-Website-Installation'
+      Version: !Ref ResourceVersion
+      Platform: Windows
+      Description: Downloads and installs a .NET web application as a Windows Service using NSSM.
+      ChangeDescription: 'Created with CloudFormation'
+      Data: !Sub |
+        schemaVersion: 1.0
+        constants:
+          - Source:
+              type: string
+              value: '${DotnetS3SourceZipFile}'
+          - DotnetBinaryName:
+              type: string
+              value: '${DotnetBinaryName}'
+          - WebsiteName:
+              type: string
+              value: '${WebsiteName}'
+          - TCPPort:
+              type: string
+              value: '${TCPPort}'
+          - HTMLTitleValidationString:
+              type: string
+              value: '${HTMLTitleValidationString}'
+        phases:
+          - name: build
+            steps:
+              - name: WebsitePath
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - Write-Host "$env:SystemDrive\{{ WebsiteName }}"
+              - name: ZipFile
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $filename = '{{ Source }}'.split('/')[-1]
+                    - Join-Path -Path $env:TEMP -ChildPath $filename
+              - name: DownloadZipFile
+                action: S3Download
+                inputs:
+                  - source: '{{ Source }}'
+                    destination: '{{ build.ZipFile.outputs.stdout }}'
+              - name: EnsureWebsiteFolderDoesNotExist
+                action: DeleteFolder
+                inputs:
+                  - path: '{{ build.WebsitePath.outputs.stdout }}'
+                    force: true
+              - name: CreateWebsiteFolder
+                action: CreateFolder
+                inputs:
+                  - path: '{{ build.WebsitePath.outputs.stdout }}'
+              - name: ExtractWebsite
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $ErrorActionPreference = 'Stop'
+                    - $ProgressPreference = 'SilentlyContinue'
+                    - Write-Host "Extracting '{{ build.ZipFile.outputs.stdout }}' to '{{ build.WebsitePath.outputs.stdout }}'..."
+                    - Expand-Archive -Path '{{ build.ZipFile.outputs.stdout }}' -DestinationPath '{{ build.WebsitePath.outputs.stdout }}'
+              - name: CreateWindowsService
+                action: ExecuteBinary
+                inputs:
+                  path: nssm.exe
+                  arguments:
+                    - 'install'
+                    - '{{ WebsiteName }}'
+                    - '{{ build.WebsitePath.outputs.stdout }}\{{ DotnetBinaryName }}'
+              - name: SetServiceStartupDirectory
+                action: ExecuteBinary
+                inputs:
+                  path: nssm.exe
+                  arguments:
+                    - 'set'
+                    - '{{ WebsiteName }}'
+                    - 'AppDirectory'
+                    - '{{ build.WebsitePath.outputs.stdout }}'
+              - name: CreateFirewallRule
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      $ErrorActionPreference = 'Stop'
+                      if (Get-NetFirewallRule -Name '{{ WebsiteName }}' -ErrorAction SilentlyContinue) {
+                          Write-Host 'The firewall rule allowing inbound TCP/{{ TCPPort }} traffic already exists.'
+                      } else {
+                          Write-Host 'Creating a firewall rule allowing inbound TCP/{{ TCPPort }} traffic'
+                          $newNetFirewallRule = @{
+                              Name = '{{ WebsiteName }}'
+                              DisplayName = '{{ WebsiteName }}'
+                              Description = 'Allows inbound traffic for the {{ WebsiteName }} website'
+                              Enabled = 'true' # This must be a string, not a bool.
+                              Profile = 'Any'
+                              Direction = 'Inbound'
+                              Action = 'Allow'
+                              Protocol = 'TCP'
+                              LocalPort = '{{ TCPPort }}'
+                              ErrorAction = 'SilentlyContinue'
+                          }
+                          New-NetFirewallRule @newNetFirewallRule
+                      }
+              - name: StartService
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - $ErrorActionPreference = 'Stop'
+                    - Start-Service -Name '{{ WebsiteName }}'
+              - name: CleanupZipFiles
+                action: DeleteFile
+                inputs:
+                  - path: '{{ build.ZipFile.outputs.stdout }}'
+
+          - name: validate
+            steps:
+              - name: TestWebsite
+                action: ExecutePowerShell
+                maxAttempts: 3
+                inputs:
+                  commands:
+                    - |
+                      $ErrorActionPreference = 'Stop'
+                      try {
+                          $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
+                          if ($content -like '*<title>{{ HTMLTitleValidationString }}</ title>*') {
+                              Write-Host 'The website is responding on TCP/{{ TCPPort }}'
+                          } else {
+                              throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
+                          }
+                      } catch {
+                          # Something failed. Sleep before allowing retry
+                          Start-Sleep -Seconds 15
+                      }
+
+          - name: test
+            steps:
+              - name: TestWebsite
+                action: ExecutePowerShell
+                maxAttempts: 3
+                inputs:
+                  commands:
+                    - |
+                      $ErrorActionPreference = 'Stop'
+                      try {
+                          $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
+                          if ($content -like '*<title>{{ HTMLTitleValidationString }}</ title>*') {
+                              Write-Host 'The website is responding on TCP/{{ TCPPort }}'
+                          } else {
+                              throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
+                          }
+                      } catch {
+                          # Something failed. Sleep before allowing retry
+                          Start-Sleep -Seconds 15
+                      }
+
+  # Recipe which references Windows Baseline image built using the CloudFormation exported Image ARN from the `WindowsBaselineStack`.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
+  Recipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Ref ResourceName
+      Version: !Ref ResourceVersion
+      Components:
+        - ComponentArn: !Ref NSSMInstallationComponent
+        - ComponentArn: !Ref WebsiteInstallationComponent
+      ParentImage: !ImportValue WindowsBaselineImage
+      Tags:
+        Purpose: ImageBuilderSample
+      WorkingDirectory: 'C:\'
+
+  # A CloudWatch LogGroup that maps to where the image creation logs will be published.
+  # This ensures the retention is configured, and that the group is removed on stack deletion.
+  RecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/imagebuilder/${ResourceName}'
+      RetentionInDays: 7
+
+  # The Distribution Configuration allows you to specify naming conventions and the account and region distributions of a successful image build.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html
+  Distribution:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: !Sub 'Deploys the ${ResourceName} AMI to all desired regions.'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          AmiDistributionConfiguration:
+            Name: !Sub '${ResourceName}-{{ imagebuilder:buildDate }}'
+            AmiTags:
+              Name: !Ref ResourceName
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # The pipeline is scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day.
+  # The build will only run if dependencies have been updated.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagepipeline.html
+  Pipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Description: !Sub 'A pipeline to automate creation of the ${ResourceName} image'
+      DistributionConfigurationArn: !Ref Distribution
+      ImageRecipeArn: !Ref Recipe
+      ImageTestsConfiguration:
+        ImageTestsEnabled: true
+        TimeoutMinutes: 60
+      InfrastructureConfigurationArn: !Ref Infrastructure
+      Name: !Sub '${ResourceName}'
+      Schedule:
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+        ScheduleExpression: 'cron(0 10 * * ? *)'
+      Status: ENABLED
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # A CloudFormation export is used to allow future stacks to use the output image from this stack.
+  # As an Image ARN uses lowercase names, we will use a custom Lambda Function to transform the
+  # name to lowercase.
+  LowerCaseLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Returns the lowercase version of a string
+      MemorySize: 256
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt LowerCaseLambdaRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import cfnresponse
+
+          def lambda_handler(event, context):
+              output = event['ResourceProperties'].get('InputString', '').lower()
+              responseData = {'OutputString': output}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+
+  # The CloudWatch Log Group for the Lambda Function.
+  RecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LowerCaseLambda}'
+      RetentionInDays: 3
+
+  # The IAM Role for the Lambda Function
+  LowerCaseLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-write-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*
+
+  # Invokes the Lambda Function to ensure a lowercase resource name is available.
+  LowerCaseImageName:
+    Type: Custom::Lowercase
+    DependsOn:
+      - RecipeLogGroup
+    Properties:
+      ServiceToken: !GetAtt LowerCaseLambda.Arn
+      InputString: !Ref ResourceName
+
+Outputs:
+  # The EC2 Image Builder Image ARN. For use in future stacks that will build cascading images with this image as their source.
+  DotnetWebsiteImage:
+    Value: !Join
+      - ''
+      - - 'arn:'
+        - !Ref AWS::Partition
+        - ':imagebuilder:'
+        - !Ref AWS::Region
+        - ':'
+        - !Ref AWS::AccountId
+        - ':image/'
+        - !GetAtt LowerCaseImageName.OutputString
+        - '/x.x.x'
+    Export:
+      Name: DotnetWebsiteImage

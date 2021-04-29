@@ -1,0 +1,42 @@
+[
+  {
+    "ParameterKey": "CustomSubnetId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "CustomSecurityGroupId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "BuildInstanceType",
+    "ParameterValue": "t2.micro"
+  },
+  {
+    "ParameterKey": "TargetECRRepository",
+    "ParameterValue": "sample-repository"
+  },
+  {
+    "ParameterKey": "ImageTag",
+    "ParameterValue": "latest"
+  },
+  {
+    "ParameterKey": "ResourceName",
+    "ParameterValue": "UbuntuDotnetWebsite"
+  },
+  {
+    "ParameterKey": "ResourceVersion",
+    "ParameterValue": "1.0.0"
+  },
+  {
+    "ParameterKey": "DotnetS3SourceTarFile",
+    "ParameterValue": "s3://< Insert your bucket name here >/sample-web-application.tar.gz"
+  },
+  {
+    "ParameterKey": "DotnetBinaryName",
+    "ParameterValue": "sample-web-application"
+  },
+  {
+    "ParameterKey": "WebsiteName",
+    "ParameterValue": "SampleDotnetWebApplication"
+  }
+]

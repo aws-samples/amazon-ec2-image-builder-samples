@@ -1,0 +1,38 @@
+[
+  {
+    "ParameterKey": "CustomSubnetId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "CustomSecurityGroupId",
+    "ParameterValue": ""
+  },
+  {
+    "ParameterKey": "ResourceName",
+    "ParameterValue": "WindowsDotnetWebsite"
+  },
+  {
+    "ParameterKey": "ResourceVersion",
+    "ParameterValue": "1.0.0"
+  },
+  {
+    "ParameterKey": "DotnetS3SourceZipFile",
+    "ParameterValue": "s3://< Insert your bucket name here >/sample-web-application.zip"
+  },
+  {
+    "ParameterKey": "DotnetBinaryName",
+    "ParameterValue": "sample-web-application"
+  },
+  {
+    "ParameterKey": "TCPPort",
+    "ParameterValue": "5000"
+  },
+  {
+    "ParameterKey": "WebsiteName",
+    "ParameterValue": "SampleDotnetWebApplication"
+  },
+  {
+    "ParameterKey": "HTMLTitleValidationString",
+    "ParameterValue": "Home page - sample_web_application"
+  }
+]

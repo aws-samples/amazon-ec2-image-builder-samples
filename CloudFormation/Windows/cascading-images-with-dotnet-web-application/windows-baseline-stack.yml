@@ -1,0 +1,258 @@
+---
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a baseline Windows Server Core 2019 image. The pipeline, by default, is scheduled to run a build at 8:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
+
+Parameters:
+  CustomSubnetId:
+    Type: String
+    Default: ""
+    Description: If you do not have a default VPC, or want to use a different VPC, specify the ID of a subnet in which to place the instance used to customize your EC2 container image. If not specified, a subnet from your default VPC will be used.
+
+  CustomSecurityGroupId:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Required if you specified a custom subnet ID. Comma-delimited list of one or more IDs of security groups belonging to the VPC to associate with the instance used to customize your EC2 container image.
+
+  ResourceName:
+    Type: String
+    Default: WindowsBaseline
+    Description: A name to use for all Image Builder resources
+
+  ResourceVersion:
+    Type: String
+    Default: '1.0.0'
+    Description: The version to use for Image Builder resources
+
+Conditions:
+  UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
+
+Resources:
+  # Create an S3 Bucket for logs.
+  # When deleting the stack, make sure to empty the bucket first.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
+    # DeletionPolicy: Retain
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by EC2 instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /executionServiceEC2Role/
+
+  # Policy to allow the instance to write to the S3 bucket (via instance role / instance profile).
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-policy.html
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      Comment: Allows the instance to save log files to an S3 bucket.
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - Ref: InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  # To pass the InstanceRole to an EC2 instance, we need an InstanceProfile.
+  # This profile will be used during the image build process.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - Ref: InstanceRole
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
+  Infrastructure:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: 'This infrastructure configuration will launch into the CloudFormation parameter provided VPC.'
+      InstanceProfileName: !Ref InstanceProfile
+      # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+          S3KeyPrefix: !Sub 'imagebuilder-${AWS::StackName}'
+      # If you would like to keep the instance running after a failed build, set TerminateInstanceOnFailure to false.
+      # TerminateInstanceOnFailure: false
+      # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
+      # security groups to be associated with the build instance.
+      SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds:
+        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # Recipe which references the latest Windows Server 2019 image, and includes a list of AWS managed quick-start components.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
+  Recipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Ref ResourceName
+      Version: !Ref ResourceVersion
+      Components:
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-windows/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-windows/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/powershell-windows/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/windows-activation-test/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-test-windows/x.x.x'
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-english-full-base-x86/x.x.x'
+      Tags:
+        Purpose: ImageBuilderSample
+      WorkingDirectory: 'C:\'
+
+  # A CloudWatch LogGroup that maps to where the image creation logs will be published.
+  # This ensures the retention is configured, and that the group is removed on stack deletion.
+  RecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/imagebuilder/${ResourceName}'
+      RetentionInDays: 7
+
+  # The Distribution Configuration allows you to specify naming conventions and the account and region distributions of a successful image build.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html
+  Distribution:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: !Sub 'Deploys the ${ResourceName} AMI to all desired regions.'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          AmiDistributionConfiguration:
+            Name: !Sub '${ResourceName}-{{ imagebuilder:buildDate }}'
+            AmiTags:
+              Name: !Ref ResourceName
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # In this example, the pipeline is scheduled to run a build at 8:00AM Coordinated Universal Time (UTC) every day.
+  # The build will only run if dependencies have been updated.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagepipeline.html
+  Pipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Description: !Sub 'A pipeline to automate creation of the ${ResourceName} image'
+      DistributionConfigurationArn: !Ref Distribution
+      ImageRecipeArn: !Ref Recipe
+      ImageTestsConfiguration:
+        ImageTestsEnabled: true
+        TimeoutMinutes: 60
+      InfrastructureConfigurationArn: !Ref Infrastructure
+      Name: !Ref ResourceName
+      Schedule:
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+        ScheduleExpression: 'cron(0 8 * * ? *)'
+      Status: ENABLED
+      Tags:
+        Purpose: ImageBuilderSample
+
+  # A CloudFormation export is used to allow future stacks to use the output image from this stack.
+  # As an Image ARN uses lowercase names, we will use a custom Lambda Function to transform the
+  # name to lowercase.
+  LowerCaseLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Returns the lowercase version of a string
+      MemorySize: 256
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt LowerCaseLambdaRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import cfnresponse
+
+          def lambda_handler(event, context):
+              output = event['ResourceProperties'].get('InputString', '').lower()
+              responseData = {'OutputString': output}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+
+  # The CloudWatch Log Group for the Lambda Function.
+  RecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LowerCaseLambda}'
+      RetentionInDays: 3
+
+  # The IAM Role for the Lambda Function
+  LowerCaseLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-write-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*
+
+  # Invokes the Lambda Function to ensure a lowercase resource name is available.
+  LowerCaseImageName:
+    Type: Custom::Lowercase
+    DependsOn:
+      - RecipeLogGroup
+    Properties:
+      ServiceToken: !GetAtt LowerCaseLambda.Arn
+      InputString: !Ref ResourceName
+
+Outputs:
+  # The EC2 Image Builder Image ARN. For use in future stacks that will build cascading images with this image as their source.
+  WindowsBaselineImage:
+    Value: !Join
+      - ''
+      - - 'arn:'
+        - !Ref AWS::Partition
+        - ':imagebuilder:'
+        - !Ref AWS::Region
+        - ':'
+        - !Ref AWS::AccountId
+        - ':image/'
+        - !GetAtt LowerCaseImageName.OutputString
+        - '/x.x.x'
+    Export:
+      Name: WindowsBaselineImage
