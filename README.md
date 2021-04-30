@@ -25,7 +25,9 @@ The ```Components``` contains sample Image Builder components. The samples demon
 
 ### Blogs
 
-* [Automate OS Image Build Pipelines with EC2 Image Builder](https://aws.amazon.com/blogs/aws/automate-os-image-build-pipelines-with-ec2-image-builder/)
+* [Automate OS Image Build Pipelines with EC2 Image Builder](https://aws.amazon.com/blogs/aws/automate-os-image-build-pipelines-with-ec2-image-builder/) (02 December 2019)
+* [Executing Ansible playbooks in your Amazon EC2 Image Builder pipeline](https://aws.amazon.com/blogs/compute/executing-ansible-playbooks-in-your-amazon-ec2-image-builder-pipeline/) (08 July 2020)
+* [Create immutable servers using EC2 Image Builder and AWS CodePipeline](https://aws.amazon.com/blogs/mt/create-immutable-servers-using-ec2-image-builder-aws-codepipeline/) (07 January 2021)
 
 ## License
 
