@@ -12,7 +12,7 @@
       "ParameterValue": "t2.micro"
     },
     {
-      "ParameterKey": "TargetECRRepositoryName",
+      "ParameterKey": "TargetECRRepository",
       "ParameterValue": "sample-repository"
     }
   ]
