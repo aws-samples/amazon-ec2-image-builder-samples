@@ -62,8 +62,6 @@ phases:
               Write-Host "Restarting Windows Update Service to activate settings..."
               Restart-Service -Name "wuauserv"
               Write-Host "done."
-                            
-              exit 0
 
   - name: validate
     steps:
