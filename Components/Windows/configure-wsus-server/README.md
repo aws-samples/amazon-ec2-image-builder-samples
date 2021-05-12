@@ -2,7 +2,7 @@
 
 This is a sample component that demonstrates how to switch the update source of Windows Update to a WSUS server instead of the public Microsoft Update servers by modifying the system registry. This is helpful if your image build pipeline is running in an isolated network segment without direct internet access or if you want to have more granular controls about the update release process.
 
-Usually the configuration of a WSUS server is done centrally via Active Directory Group Policy Objects (GPOs). In the case of an EC2 image builder pipeline GPOs usually don't apply as the build instance will not be joined to the active directory so this component takes the approach to modify the registry keys.
+Usually the configuration of a WSUS server is done centrally via Active Directory Group Policy Objects (GPOs). In the case of an EC2 Image Builder pipeline GPOs usually don't apply as the build instance will not be joined to the active directory so this component takes the approach to modify the registry keys.
 
 The component is based on this article in the Microsoft [documentation](https://docs.microsoft.com/de-de/security-updates/windowsupdateservices/21669493).
 
