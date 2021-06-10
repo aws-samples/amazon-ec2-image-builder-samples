@@ -41,7 +41,7 @@ phases:
               
               Write-Host "Fetching password from Secrets Manager..."
               $secret = Get-SECSecretValue -SecretId "{{ PasswordSecret }}"
-              $secretValue = ConvertFrom-JSON $secret.SecretString
+              $secretValue = ConvertFrom-JSON -InputObject $secret.SecretString
               Write-Host "Done."
 
               Write-Host "Creating local Windows user for RDP access..."
