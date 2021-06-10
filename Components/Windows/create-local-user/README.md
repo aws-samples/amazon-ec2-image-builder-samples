@@ -12,7 +12,7 @@ As the password is set during the runtime of the pipeline the instances deployed
 - an IAM policy that allows the build instance to fetch the secret by allowing the ```secretsmanager:GetSecretValue``` API action
 - (if set) The resource policy on the secret needs to allow the build instance IAM role to read it
 - (if set) The resource policy on the KMS key protecting the secret needs to allow the build instance IAM role to use it for decryption
-- a Windows image build pipeline (This component was tested with the AWS provided Windows AMIs for Server 2019)
+- a Windows image build pipeline with a minium version of Windows Server 2016
 
 ## Walkthrough
 
@@ -22,7 +22,7 @@ As the password is set during the runtime of the pipeline the instances deployed
 4. Within the ```create-local-user.yml``` document: Update the constant ```Description``` at the beginning of the document to set the description for the user
 5. Within the ```create-local-user.yml``` document: Update the constant ```PasswordSecret``` at the beginning of the document to specify the secret name or ARN the password shoudl be fetched from
 6. Create a new EC2 Image Builder component with the contents of ```create-local-user.yml```
-7. Add the component to an image recipe that targets Windows Server 2019 (This is the tested one, other versions may work, too)
+7. Add the component to an image recipe that targets Windows Server 2016, 2019, or 2004
 8. Use the image recipe to create an image
 
 ## Sample IAM policy for secret access
