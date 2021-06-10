@@ -31,34 +31,6 @@ constants:
 phases:
   - name: build
     steps:
-      - name: PrepareAwsPSTools
-        action: ExecutePowerShell
-        inputs:
-          commands:
-            - |
-              $ErrorActionPreference = 'Stop'
-              $ProgressPreference = 'SilentlyContinue'
-            
-              Write-Host "Checking if NuGet Package Provider is available..."
-              $availableProviders = Get-PackageProvider -ListAvailable
-              
-              if ( ($availableProviders.Name -Like "NuGet").Length -Eq 0 ) {
-              
-                Write-Host "NuGet is not available. Installing it."
-                Install-PackageProvider -Name NuGet -Force
-              }
-              Write-Host "Done."
-              
-              Write-Host "Checking if AWS PowerShell Tools are available..."
-              $availableModules = Get-Module -ListAvailable
-              
-              if ( ($availableModules.Name -Like "AWSPowerShell").Length -Eq 0 ) {
-              
-                Write-Host "AWS PowerShell Tools are not available. Installing them."
-                Install-Module -Name Aws.Tools.Installer -Force
-              }
-              Write-Host "Done."
-              
       - name: CreateLocalUser
         action: ExecutePowerShell
         inputs:
