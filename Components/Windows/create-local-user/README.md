@@ -40,3 +40,13 @@ As the password is set during the runtime of the pipeline the instances deployed
     ]
 }
 ```
+
+## Sample Secrets Manager Custom Secret
+
+Custom secrets are organized as key/value pairs. The sample component uses the string "password" as they key.
+
+```json
+{
+  "password": "Secret.1234!"
+}
+```
