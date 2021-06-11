@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: LocalUser
+description: 'Creates a local Windows User account without admin permission but RDP login'
+schemaVersion: 1.0
+constants:
+  - Username:
+      type: string
+      value: dba-access
+  - FullName:
+      type: string
+      value: DBA access
+  - Description:
+      type: string
+      value: Local user account for DBA Jump host access
+  - PasswordSecret:
+      type: string
+      value: Jumphost/RdpUser
+phases:
+  - name: build
+    steps:
+      - name: CreateLocalUser
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $ProgressPreference = 'SilentlyContinue'
+              
+              Write-Host "Fetching password from Secrets Manager..."
+              $secret = Get-SECSecretValue -SecretId "{{ PasswordSecret }}"
+              $secretValue = ConvertFrom-JSON -InputObject $secret.SecretString
+              Write-Host "Done."
+
+              Write-Host "Creating local Windows user for RDP access..."
+              $password = ConvertTo-SecureString -String $secretValue.password -AsPlaintext -Force
+              New-LocalUser "{{ Username }}" -Password $password -PasswordNeverExpires -FullName "{{ FullName }}" -Description "{{ Description }}"
+              Write-Host "Done."
+              
+              Write-Host "Adding user to RDP access group..."
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "{{ Username }}"
+              Write-Host "Done."
+
+  - name: validate
+    steps:
+      - name: ValidateLocalUserCreation
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              Write-Host "Validating user creation"
+              
+              try {
+                $localUser = Get-LocalUser -Name "{{ Username }}"
+              }
+              catch {
+                Write-Host "Local user account was not found"
+                exit 1
+              }
+              Write-Host "The local user account was created"
+              
+              if ($localUser.FullName -ne "{{ FullName }}") {
+                Write-Host "The full name is not matching the specification"
+                exit 1
+              }
+              
+              if ($localUser.Description -ne "{{ Description }}") {
+                Write-Host "The Description is not matching the specification"
+                exit 1
+              }
+
+              Write-Host "User creation was validated"
