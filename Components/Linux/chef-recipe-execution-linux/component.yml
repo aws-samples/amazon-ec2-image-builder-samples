@@ -3,41 +3,57 @@
 name: Chef Client Execution on Linux
 description: This is a sample component that demonstrates how to download and execute a Chef recipe against a Linux server. This sample will install Chef using the Chef Software Install script. For more information about the installation script, review the documentation at https://docs.chef.io/packages/#chef-software-install-script.
 schemaVersion: 1.0
+constants:
+  - ChefInstallationScriptSource:
+      type: string
+      value: https://omnitruck.chef.io/install.sh
+  - RecipeSource:
+      type: string
+      value: 's3://<enter_s3_bucket_name_here>/<enter_s3_object_key_here>'
 phases:
   - name: build
     steps:
+      - name: InstallationScript
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "$HOME/chef_install.sh"
+      - name: DownloadInstallationScript
+        action: WebDownload
+        inputs:
+          - source: '{{ ChefInstallationScriptSource }}'
+            destination: '{{ build.InstallationScript.outputs.stdout }}'
+      - name: SetInstallationScriptExecutable
+        action: SetFilePermissions
+        inputs:
+          - path: '{{ build.InstallationScript.outputs.stdout }}'
+            permissions: 0700
       - name: InstallChefClient
         action: ExecuteBash
         inputs:
           commands:
-            - |
-              if [ -x "$(command -v chef-client)" ]; then
-                echo "Chef is already installed."
-              else
-                SOURCE=https://omnitruck.chef.io/install.sh
-                SCRIPT=/tmp/chef_install.sh
-                echo "Installing Chef using the installation script '$SOURCE'"
-                curl -s -L $SOURCE -o $SCRIPT
-                chmod u+x $SCRIPT
-                sudo $SCRIPT -c stable
-                rm $SCRIPT
-              fi
+            - sudo '{{ build.InstallationScript.outputs.stdout }}' -c stable
+      - name: RecipeDestination
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "$HOME/recipe.rb"
       - name: DownloadRecipe
         action: S3Download
         inputs:
-          - source: s3://<enter_s3_bucket_name_here>/<enter_s3_object_key_here>
-            destination: /tmp/recipe.rb
+          - source: '{{ RecipeSource }}'
+            destination: '{{ build.RecipeDestination.outputs.stdout }}'
       - name: ApplyRecipe
         action: ExecuteBinary
         inputs:
           path: chef-client
           arguments:
             - '--local-mode'
-            - '{{ build.DownloadRecipe.inputs[0].destination }}'
+            - '{{ build.RecipeDestination.outputs.stdout }}'
             - '--chef-license'
             - 'accept-no-persist'
-      - name: DeleteRecipe
-        action: ExecuteBash
+      - name: Cleanup
+        action: DeleteFile
         inputs:
-          commands:
-            - rm {{ build.DownloadRecipe.inputs[0].destination }}
+          - path: '{{ build.RecipeDestination.outputs.stdout }}'
+          - path: '{{ build.InstallationScript.outputs.stdout }}'
