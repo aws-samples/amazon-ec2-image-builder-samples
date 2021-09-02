@@ -1,10 +1,10 @@
-# Ubuntu Server 20 Image with .NET 5 Preview
+# Ubuntu Server 20 Image with .NET 6 Preview
 
-This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build an Ubuntu Server 20 Amazon Machine Image (AMI) with the latest .NET Preview (RC1).
+This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build an Ubuntu Server 20 Amazon Machine Image (AMI) with the latest .NET 6 Preview.
 
 This template works in standard and GovCloud (US) regions.
 
-***Internet connectivity is required in your default VPC*** to download the .NET 5 installation files. If you do not have a default VPC, or want to use a custom VPC, you will need to specify a subnet ID and one or more security group IDs in the VPC as parameters when you create a stack based on this template.
+***Internet connectivity is required in your default VPC*** to download the .NET 6 installation files. If you do not have a default VPC, or want to use a custom VPC, you will need to specify a subnet ID and one or more security group IDs in the VPC as parameters when you create a stack based on this template.
 
 ## How this Stack Works
 
@@ -28,12 +28,18 @@ Finally, the image resource is used to create an [AWS::SSM::Parameter](https://d
 
 It takes approximately 20 minutes for the stack build to complete.
 
-1. Upload the ```ubuntuserver20-with-.net5.yml``` template to CloudFormation.
+1. Upload the ```ubuntuserver20-with-.net6.yml``` template to CloudFormation.
 2. You will see a checkbox informing you that the stack creates IAM resources. Read and check the box.
 3. Wait for the stack to build.
-4. Note the AWS::ImageBuilder::Image resource ```UbuntuServer20WithNET5``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` when complete.
+4. Note the AWS::ImageBuilder::Image resource ```UbuntuServer20WithNET6``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` when complete.
 
 ## Troubleshooting
+
+### Instance Type is not available in the current region
+
+If you received an error like `None of the provided Instance Types are available in the current region.`, try changing the `BuildInstanceType` parameter to an Instance Type that is available in the AWS Region you're using.
+
+### AWS Systems Manager Automation
 
 While the stack is building, you will see an EC2 instance running. This is either the build or test instance. AWS Systems Manager (SSM) Automation will also run. You can observe this automation to see the steps EC2 Image Builder takes to build your image.
 
@@ -43,6 +49,6 @@ If the stack fails, check the CloudFormation events. These events include a desc
 
 To delete the resources created by the stack:
 
-1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html for more information on ```DeletionPolicy``` attributes.
+1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html) for more information on ```DeletionPolicy``` attributes.
 2. Delete the stack in the CloudFormation console, or by using the CLI/SDK.
 3. You must delete any AMIs created by the stack. You can use the EC2 console, CLI, or SDK to delete the AMIs. Note that deleting the CloudFormation stack will NOT delete the AMIs created by the stack.
