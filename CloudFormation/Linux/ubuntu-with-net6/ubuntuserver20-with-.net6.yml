@@ -114,17 +114,17 @@ Resources:
   # validation step which will run after the install but before the image capture. Also included, is a test step which
   # runs after the image is captured (EC2 Image Builder launches a new instance from the image and runs the test phase).
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html
-  InstallNET5Component:
+  InstallNET6Component:
     Type: AWS::ImageBuilder::Component
     Properties:
-      Name: NET5
+      Name: NET6
       Version: 0.0.1
       Description: Install the latest .NET 5 preview.
       ChangeDescription: First version
       Platform: Linux
       Data: |
-        name: InstallNET5
-        description: Downloads and Installs the latest .NET 5 preview
+        name: InstallNET6
+        description: Downloads and Installs the latest .NET 6 preview
         schemaVersion: 1.0
         constants:
           - InstallScriptSource:
@@ -132,7 +132,10 @@ Resources:
               value: https://aka.ms/install-dotnet-preview
           - Version:
               type: string
-              value: '5.0'
+              value: '6.0'
+          - TestFolder:
+              type: string
+              value: '/dotnet_test'
         phases:
           - name: build
             steps:
@@ -150,7 +153,7 @@ Resources:
                 inputs:
                   - source: '{{ InstallScriptSource }}'
                     destination: '{{ build.InstallFolder.outputs.stdout }}/install.sh'
-              - name: InstallNET5
+              - name: InstallNET6
                 action: ExecuteBash
                 inputs:
                   commands:
@@ -196,28 +199,23 @@ Resources:
 
           - name: test
             steps:
-              - name: InstallFolder
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - echo "$HOME/dotnet_test"
               - name: CreateInstallFolder
                 action: CreateFolder
                 inputs:
-                  - path: '{{ test.InstallFolder.outputs.stdout }}'
+                  - path: '{{ TestFolder }}'
               - name: GenerateSample
                 action: ExecuteBash
                 inputs:
                   commands:
                     - 'set -e'
-                    - 'cd {{ test.InstallFolder.outputs.stdout}}'
-                    - 'dotnet new console --name sample'
+                    - 'cd {{ TestFolder }}'
+                    - 'DOTNET_CLI_HOME={{ TestFolder }} DOTNET_CLI_TELEMETRY_OPTOUT=1 HOME="/$(whoami)" dotnet new console --name sample'
               - name: ValidateSample
                 action: ExecuteBash
                 inputs:
                   commands:
                     - |
-                      FILE={{ test.InstallFolder.outputs.stdout }}/sample/sample.csproj
+                      FILE={{ TestFolder }}/sample/sample.csproj
                       if [ -e $FILE ]; then
                         echo "Found generated sample project. Proceeding."
                       else
@@ -227,10 +225,10 @@ Resources:
 
   # Recipe which references the latest (x.x.x) version of Ubuntu Server 20 AMI.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
-  UbuntuServer20NET5ImageRecipe:
+  UbuntuServer20NET6ImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: UbuntuServer20NET5
+      Name: UbuntuServer20NET6
       Version: 0.0.1
       # ${AWS::Partition} returns the partition where you are running the CloudFormation template. For standard AWS regions, the
       # partition is aws. For resources elsewhere, the partition is aws-partitionname. For example, China (Beijing and Ningxia)
@@ -240,26 +238,35 @@ Resources:
         Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-server-20-lts-x86/x.x.x
       Components:
         - ComponentArn:
-            Ref: InstallNET5Component
+            Ref: InstallNET6Component
+
+  # The CloudWatch LogGroup for the image build logs is provided to ensure the LogGroup is cleaned up if the stack is deleted.
+  UbuntuServer20Net6LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/UbuntuServer20NET6
+      RetentionInDays: 3
 
   # The Image resource will show complete in CloudFormation once your image is done building. Use this resource later in your
   # stack to reference the image within other resources.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html
-  UbuntuServer20WithNET5:
+  UbuntuServer20WithNET6:
     Type: AWS::ImageBuilder::Image
     Properties:
       ImageRecipeArn:
-        Ref: UbuntuServer20NET5ImageRecipe
+        Ref: UbuntuServer20NET6ImageRecipe
       InfrastructureConfigurationArn:
         Ref: UbuntuServer20ImageInfrastructureConfiguration
 
   # Create an SSM Parameter Store entry with our resulting ImageId.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html
-  UbuntuServer20WithNET5Parameter:
+  UbuntuServer20WithNET6Parameter:
     Type: AWS::SSM::Parameter
     Properties:
       Description: Image Id for Ubuntu Server 20 With latest .NET 5 preview
-      Name: /Test/Images/UbuntuServer20WithNET5
+      Name: /Test/Images/UbuntuServer20WithNET6
       Type: String
       Value:
-        Fn::GetAtt: [UbuntuServer20WithNET5, ImageId]
+        Fn::GetAtt: [UbuntuServer20WithNET6, ImageId]
