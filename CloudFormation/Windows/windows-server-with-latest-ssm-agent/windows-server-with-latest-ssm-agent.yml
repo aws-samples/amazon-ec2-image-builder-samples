@@ -1,0 +1,149 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  # Create an S3 Bucket for logs.
+  # When deleting the stack, make sure to empty the bucket first.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
+    # DeletionPolicy: Retain
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /executionServiceEC2Role/
+
+  # Policy to allow the instance to write to the S3 bucket (via instance role / instance profile).
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-policy.html
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      Comment: Allows the instance to save log files to an S3 bucket.
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - Ref: InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - Fn::Sub:
+                  - arn:${AWS::Partition}:s3:::${BUCKET}/*
+                  - BUCKET:
+                      Ref: ImageBuilderLogBucket
+
+  # To pass the InstanceRole to an EC2 instance, we need an InstanceProfile.
+  # This profile will be used during the image build process.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - Ref: InstanceRole
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
+  WindowsServer2019ImageInfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: Windows-Server-2019-with-latest-SSM-Agent-Infrastructure-Configuration
+      InstanceProfileName:
+        Ref: InstanceProfile
+      # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
+      Logging:
+        S3Logs:
+          S3BucketName:
+            Ref: ImageBuilderLogBucket
+          # S3KeyPrefix: 'my-imagebuilder-bucket-prefix'
+      # If you would like to keep the instance running after a failed build, set TerminateInstanceOnFailure to false.
+      # TerminateInstanceOnFailure: false
+      # If you do not have a default VPC or want to use a different VPC, you must specify the subnet ID to use
+      # SubnetId: 'subnet-id'
+
+  # The CloudWatch LogGroup for the image build logs is provided to ensure the LogGroup is cleaned up if the stack is deleted.
+  WindowsServer2019LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/Windows-Server-2019-with-latest-SSM-Agent
+      RetentionInDays: 3
+
+  # Recipe which references the latest (x.x.x) version of the Windows Server 2019 English AMI).
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
+  WindowsServer2019ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: Windows-Server-2019-with-latest-SSM-Agent
+      Version: 0.0.1
+      # ${AWS::Partition} returns the partition where you are running the CloudFormation template. For standard AWS regions, the
+      # partition is aws. For resources elsewhere, the partition is aws-partitionname. For example, China (Beijing and Ningxia)
+      # regions use aws-cn and AWS GovCloud (US) regions are aws-us-gov.
+      # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html
+      ParentImage:
+        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-english-full-base-x86/x.x.x
+      Components:
+        - ComponentArn:
+            Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-windows/x.x.x
+      AdditionalInstanceConfiguration:
+        UserDataOverride:
+          Fn::Base64:
+            Fn::Sub: |
+              <powershell>
+              $ErrorActionPreference = 'Stop'
+              $source = 'https://amazon-ssm-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/windows_amd64/AmazonSSMAgentSetup.exe'
+              $installer = Join-Path -Path $env:TEMP -ChildPath 'AmazonSSMAgentSetup.exe'
+              $webClient = New-Object -TypeName System.Net.WebClient
+              $webClient.DownloadFile($source, $installer)
+              $webClient.Dispose()
+              Start-Process -FilePath $installer -ArgumentList @('/s') -Wait
+              Remove-Item -Path $installer -Force
+              </powershell>
+
+  # The Image resource will show complete in CloudFormation once your image is done building. Use this resource later in your
+  # stack to reference the image within other resources.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html
+  WindowServer2019WithLatestSSMAgent:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      ImageRecipeArn:
+        Ref: WindowsServer2019ImageRecipe
+      InfrastructureConfigurationArn:
+        Ref: WindowsServer2019ImageInfrastructureConfiguration
+
+  # Create an SSM Parameter Store entry with our resulting ImageId.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html
+  WindowServer2019WithLatestSSMAgentParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Image Id for Window Server 2019 with the latest version of the Amazon SSM Agent installed
+      Name: /test/images/WindowsServer2019-LatestSSMAgent
+      Type: String
+      Value:
+        Fn::GetAtt: [WindowServer2019WithLatestSSMAgent, ImageId]
