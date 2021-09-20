@@ -6,181 +6,20 @@ Parameters:
     Default: Image-Builder
     Description: Name for this service; used in the code repository and pipeline names
 
-  AutoScalingGroupName:
+  LaunchTemplateId:
     Type: String
-    #Default: MyDevASG
-    Description: Name for the AutoScaling Group.
+    Description: Launch Template ID for the existing AutoScaling Group.
+    AllowedPattern: "^lt-[a-z0-9-_]{17}$"
 
-  #SSMParameterName:
-    #Type: String
-    #Default: /Test/Images/UbuntuServer20WithNET5
-    #Description: Name for the Parameter Store, Parameter used in the code to store the AMI ID
+  ImageBuilderTemplateFileName:
+    Type: String
+    Default: ib_builder.yaml
+    Description: Name for the Parameter Store, Parameter used in the code to store the AMI ID
 
 Resources:
-
-##########
-# Lambda #
-##########
-
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: 'Lambda-Role'
-      Path: '/'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-        - Action: 'sts:AssumeRole'
-          Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-      Policies:
-      - PolicyName: LambdaAccessPolicy
-        PolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-          - Action:
-            - logs:*
-            - ec2:DescribeImages
-            - ec2:ResetImageAttribute
-            - ec2:DescribeInstances
-            - ec2:ModifyInstanceAttribute
-            - autoscaling:DescribeAutoScalingGroups
-            - autoscaling:CreateLaunchConfiguration
-            - autoscaling:DescribeLaunchConfigurations
-            - autoscaling:UpdateAutoScalingGroup
-            - ssm:DescribeParameters
-            - ssm:GetParameter
-            - ssm:GetParameters
-            - codepipeline:PutJobSuccessResult
-            - codepipeline:PutJobFailureResult
-            Resource: "*"
-            Effect: Allow
-
-  UpdateASGFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: LambdaExecutionRole
-    Properties:
-      Environment:
-        Variables:
-          TARGET_ASG: !Sub "${AutoScalingGroupName}"
-      FunctionName: !Sub ${ServiceName}-UpdateAutoScalingGroup
-      Description: Invoke a function to update an autoscaling group.
-      Handler: index.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Runtime: python3.8
-      Timeout: 600
-      Code:
-        ZipFile: |
-          from __future__ import print_function
-          from logging import exception
-          from boto3.session import Session
-          import json
-          import boto3
-          import time
-          import sys
-          import os
-          import zipfile
-          import tempfile
-          import botocore
-
-          TARGET_ASG = os.environ['TARGET_ASG']
-          code_pipeline = boto3.client('codepipeline')
-          asObj = boto3.client('autoscaling')
-          ssmObj = boto3.client('ssm')
-          Date = time.strftime("%d%m%y")
-          Time = time.strftime("%H%M%S")
-          configName = "Automated_%s_%s" % (Date, Time)
-
-          def get_asg_details(asg_var):
-            asg_out = {}
-            ASG = asObj.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_var])
-            asg_out['ASG_InstanceID'] = ASG['AutoScalingGroups'][0]['Instances'][0]['InstanceId']
-            return asg_out
-          
-          def get_ami_id(AMI_SSM_PARAMETER):
-            ami_ssm_param = ssmObj.get_parameter(Name=AMI_SSM_PARAMETER, WithDecryption=False)
-            return ami_ssm_param['Parameter']['Value']
-
-          def create_launch_config(config_name, ami_id, instance_id):
-            response = asObj.create_launch_configuration(LaunchConfigurationName = config_name, ImageId = ami_id, InstanceId = instance_id)
-            return response
-
-          def update_asg(asg_name, launch_config_name):
-            asObj.update_auto_scaling_group(AutoScalingGroupName = asg_name, LaunchConfigurationName = launch_config_name)
-            return f'AutoScaling Group {TARGET_ASG} Updated!'
-
-          def find_artifact(artifacts, name):
-            for artifact in artifacts:
-              if artifact['name'] == name:
-                return artifact
-            raise Exception('Input artifact named "{0}" not found in event'.format(name))
-
-          def get_template(s3, artifact, file_in_zip):
-            tmp_file = tempfile.NamedTemporaryFile()
-            bucket = artifact['location']['s3Location']['bucketName']
-            key = artifact['location']['s3Location']['objectKey']
-
-            with tempfile.NamedTemporaryFile() as tmp_file:
-              s3.download_file(bucket, key, tmp_file.name)
-              with zipfile.ZipFile(tmp_file.name, 'r') as zip:
-                return zip.read(file_in_zip)
-          
-          def put_job_success(job, message):
-            print('Putting job success')
-            print(message)
-            code_pipeline.put_job_success_result(jobId=job)
-
-          def put_job_failure(job, message):
-            print('Putting job failure')
-            print(message)
-            code_pipeline.put_job_failure_result(jobId=job, failureDetails={'message': message, 'type': 'JobFailed'})
-
-          def setup_s3_client(job_data):
-            key_id = job_data['artifactCredentials']['accessKeyId']
-            key_secret = job_data['artifactCredentials']['secretAccessKey']
-            session_token = job_data['artifactCredentials']['sessionToken']
-            session = Session(aws_access_key_id=key_id, aws_secret_access_key=key_secret, aws_session_token=session_token)
-            return session.client('s3', config=botocore.client.Config(signature_version='s3v4'))
-
-          def lambda_handler(event, context):
-            job_id = event['CodePipeline.job']['id']
-            job_data = event['CodePipeline.job']['data']
-            artifacts = job_data['inputArtifacts']
-            artifact = 'OutCFNZip'
-            template_file = 'cfnoutput.json'
-
-            try:
-              artifact_data = find_artifact(artifacts, artifact)
-              s3 = setup_s3_client(job_data)
-              template = get_template(s3, artifact_data, template_file)
-              template_in_json = json.loads(template)
-              ami_ssm_parameter = template_in_json['SSMParam']
-              ami = get_ami_id(ami_ssm_parameter)
-              print(ami)
-            except Exception as e:
-              put_job_failure(job_id, 'Function exception: ' + str(e))
-              exit('Exit')
-            
-            try:
-              asg = get_asg_details(TARGET_ASG)
-              print(asg)
-              instance = asg['ASG_InstanceID']
-              print(instance)
-              create_launch_config(configName, ami, instance)
-              update_asg(TARGET_ASG, configName)
-              put_job_success(job_id, 'Complete!')
-            except Exception as e:
-              put_job_failure(job_id, 'Function exception: ' + str(e))
-              exit('Exit')
-            return {'statusCode': 200, 'body': json.dumps('Complete!!!')}
-
-
 ##########
 # Source #
 ##########
-
 # Code repository for AMI Builder
   CodeRepository:
     Type: AWS::CodeCommit::Repository
@@ -195,6 +34,9 @@ Resources:
 # It will receive SourceZip (CodeCommit Git HEAD)
   SourceArtifactsBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
 
 # CodePipeline
 #############
@@ -245,18 +87,7 @@ Resources:
             Resource: "*"
             Effect: Allow
           - Action:
-            - lambda:InvokeFunction
-            - lambda:ListFunctions
-            Resource: "*"
-            Effect: Allow
-          - Action:
-            - ec2:*
             - s3:*
-            - cloudformation:*
-            - autoscaling:*
-            Resource: "*"
-            Effect: Allow
-          - Action:
             - cloudformation:CreateStack
             - cloudformation:DeleteStack
             - cloudformation:DescribeStacks
@@ -311,6 +142,21 @@ Resources:
             - iam:RemoveRoleFromInstanceProfile
             - iam:DeleteRole
             - iam:DeleteInstanceProfile
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DeleteLogGroup
+            - logs:DescribeLogGroups
+            - logs:PutLogEvents
+            - logs:PutRetentionPolicy
+            - ec2:RunInstances
+            - ec2:TerminateInstances
+            - ec2:DescribeInstances
+            - ec2:DescribeAccountAttributes
+            - ec2:GetLaunchTemplateData
+            - ec2:DescribeLaunchTemplates
+            - ec2:CreateLaunchTemplate
+            - ec2:CreateLaunchTemplateVersion
+            - ec2:ModifyLaunchTemplate
             Resource: "*"
             Effect: Allow
 
@@ -333,7 +179,7 @@ Resources:
                 Version: 1
               Configuration:
                 RepositoryName: !Sub '${ServiceName}_Repo'
-                BranchName: master
+                BranchName: main
               OutputArtifacts:
               - Name: SourceZip
               RunOrder: 1
@@ -350,26 +196,12 @@ Resources:
                 Capabilities: CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM,CAPABILITY_IAM
                 StackName: !Sub '${ServiceName}-Stack'
                 RoleArn: !GetAtt CloudFormationExecutionRole.Arn
-                TemplatePath: 'SourceZip::ib_builder.yml'
+                TemplatePath: !Sub 'SourceZip::${ImageBuilderTemplateFileName}'
+                ParameterOverrides: !Sub '{"EC2LaunchTemplateId": "${LaunchTemplateId}"}'
                 OutputFileName: 'cfnoutput.json'
               OutputArtifacts:
               - Name: OutCFNZip
               InputArtifacts:
               - Name: SourceZip
               RunOrder: 2
-        - Name: UpdateASG
-          Actions:
-            - Name: UpdateAutoScalingGroup
-              ActionTypeId:
-                Category: Invoke
-                Owner: AWS
-                Provider: Lambda
-                Version: 1
-              Configuration:
-                FunctionName: !Sub ${ServiceName}-UpdateAutoScalingGroup
-              RunOrder: 3
-              OutputArtifacts: []
-              InputArtifacts:
-              - Name: OutCFNZip
-              Region: !Ref 'AWS::Region'
       RestartExecutionOnUpdate: true
