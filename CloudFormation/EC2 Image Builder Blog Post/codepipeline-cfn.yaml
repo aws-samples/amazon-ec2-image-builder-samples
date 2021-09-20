@@ -73,7 +73,6 @@ Resources:
       Timeout: 600
       Code:
         ZipFile: |
-          from __future__ import print_function
           from logging import exception
           from boto3.session import Session
           import json
@@ -86,29 +85,29 @@ Resources:
           import botocore
 
           TARGET_ASG = os.environ['TARGET_ASG']
-          code_pipeline = boto3.client('codepipeline')
-          asObj = boto3.client('autoscaling')
-          ssmObj = boto3.client('ssm')
+          codepipeline_client = boto3.client('codepipeline')
+          autoscaling_client = boto3.client('autoscaling')
+          ssm_client = boto3.client('ssm')
           Date = time.strftime("%d%m%y")
           Time = time.strftime("%H%M%S")
           configName = "Automated_%s_%s" % (Date, Time)
 
-          def get_asg_details(asg_var):
+          def get_asg_details(asg_name):
             asg_out = {}
-            ASG = asObj.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_var])
+            ASG = autoscaling_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
             asg_out['ASG_InstanceID'] = ASG['AutoScalingGroups'][0]['Instances'][0]['InstanceId']
             return asg_out
           
           def get_ami_id(AMI_SSM_PARAMETER):
-            ami_ssm_param = ssmObj.get_parameter(Name=AMI_SSM_PARAMETER, WithDecryption=False)
+            ami_ssm_param = ssm_client.get_parameter(Name=AMI_SSM_PARAMETER, WithDecryption=False)
             return ami_ssm_param['Parameter']['Value']
 
           def create_launch_config(config_name, ami_id, instance_id):
-            response = asObj.create_launch_configuration(LaunchConfigurationName = config_name, ImageId = ami_id, InstanceId = instance_id)
+            response = autoscaling_client.create_launch_configuration(LaunchConfigurationName = config_name, ImageId = ami_id, InstanceId = instance_id)
             return response
 
           def update_asg(asg_name, launch_config_name):
-            asObj.update_auto_scaling_group(AutoScalingGroupName = asg_name, LaunchConfigurationName = launch_config_name)
+            autoscaling_client.update_auto_scaling_group(AutoScalingGroupName = asg_name, LaunchConfigurationName = launch_config_name)
             return f'AutoScaling Group {TARGET_ASG} Updated!'
 
           def find_artifact(artifacts, name):
@@ -130,12 +129,12 @@ Resources:
           def put_job_success(job, message):
             print('Putting job success')
             print(message)
-            code_pipeline.put_job_success_result(jobId=job)
+            codepipeline_client.put_job_success_result(jobId=job)
 
           def put_job_failure(job, message):
             print('Putting job failure')
             print(message)
-            code_pipeline.put_job_failure_result(jobId=job, failureDetails={'message': message, 'type': 'JobFailed'})
+            codepipeline_client.put_job_failure_result(jobId=job, failureDetails={'message': message, 'type': 'JobFailed'})
 
           def setup_s3_client(job_data):
             key_id = job_data['artifactCredentials']['accessKeyId']
@@ -225,15 +224,17 @@ Resources:
             Condition:
               StringEqualsIfExists:
                 iam:PassedToService:
-                - cloudformation.amazonaws.com
-                - ec2.amazonaws.com
+                - !Sub "cloudformation.${AWS::URLSuffix}"
+                - !Sub "ec2.${AWS::URLSuffix}"
           - Action:
             - codecommit:CancelUploadArchive
             - codecommit:GetBranch
             - codecommit:GetCommit
             - codecommit:GetUploadArchiveStatus
             - codecommit:UploadArchive
-            Resource: "*"
+            Resource:
+            - !Sub arn:${AWS::Partition}:codecommit:${AWS::Region}:${AWS::AccountId}:*
+            - !Sub arn:${AWS::Partition}:codecommit:${AWS::Region}:${AWS::AccountId}:${ServiceName}_Repo
             Effect: Allow
           - Action:
             - codedeploy:CreateDeployment
@@ -242,12 +243,16 @@ Resources:
             - codedeploy:GetDeployment
             - codedeploy:GetDeploymentConfig
             - codedeploy:RegisterApplicationRevision
-            Resource: "*"
+            Resource:
+            - !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:*/*
+            - !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:application:*
+            - !Sub arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*
             Effect: Allow
           - Action:
             - lambda:InvokeFunction
             - lambda:ListFunctions
-            Resource: "*"
+            Resource:
+            - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:*
             Effect: Allow
           - Action:
             - ec2:*
@@ -284,7 +289,8 @@ Resources:
             Service:
             - cloudformation.amazonaws.com
       ManagedPolicyArns:
-      - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+      #- arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+      - !Sub arn:${AWS::Partition}:iam:policy/AWSCloudFormationFullAccess
       Policies:
       - PolicyName: CFNDeploymentAccessPolicy
         PolicyDocument:
@@ -314,7 +320,7 @@ Resources:
             Resource: "*"
             Effect: Allow
 
-  codepipeline:
+  CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       Name: !Sub ${ServiceName}-Pipeline

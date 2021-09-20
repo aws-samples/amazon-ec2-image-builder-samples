@@ -10,7 +10,7 @@ Amazon EC2 Image Builder simplifies the creation, maintenance, validation, shari
 
 •	Deploy a CloudFormation template that creates CodeCommit repository and CodePipeline pipeline. You must provide an existing Autoscaling Group name. 
 •	Upload your code to your Git repository, we will be using CodeCommit in this blog, but you can use GitHub. Once the code is committed, it automatically triggers creation of another CloudFormation stack, which triggers the launch of EC2 Image Builder pipeline. This creates a golden AMI based on the Image Builder components and recipes in your committed code. The CodeCommit repository orchestrates pipeline and listens for new commits.
-•	Image Builder kicks-off the build and test phases defined on the Image Builder recipe. The sample EC2 Image Builder CloudFormation template used for this post is [here](https://github.com/aws-samples/amazon-ec2-image-builder-samples/tree/master/CloudFormation).
+•	Image Builder kicks-off the build and test phases defined on the Image Builder recipe. The sample EC2 Image Builder CloudFormation template used for this post is [here](https://github.com/aws-samples/amazon-ec2-image-builder-samples/blob/master/CloudFormation/Linux/ubuntu-with-net5/ubuntuserver20-with-.net5.yml).
 •	The output AMI ID is saved in Systems Manager Parameter Store.
 •	The lambda function uses the Systems Manager Parameter Store value to create a new Launch Configuration which is used in the update the updated Autoscaling Group.
 
@@ -27,7 +27,7 @@ For the full solution overview visit Blog link.
 
 ### CloudFormation
 
-The ```CloudFormation``` folder contains sample CloudFormation templates in yaml format. There are 2 template files: 
+This folder contains sample CloudFormation templates in yaml format. There are 2 template files: 
 1. The codepipeline-cfn.yml template will create CodeCommit repository and CodePipeline pipeline. 
 2. The second template file ib_builder.yml is what you commit to your Git repository. When you commit this file, it will launch a 2nd CloudFormation stack that kick-starts EC2 Image Builder pipeline for golden AMI creation. 
 
