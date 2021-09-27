@@ -119,7 +119,7 @@ Resources:
     Properties:
       Name: NET6
       Version: 0.0.1
-      Description: Install the latest .NET 5 preview.
+      Description: Install the latest .NET 6 preview.
       ChangeDescription: First version
       Platform: Linux
       Data: |
