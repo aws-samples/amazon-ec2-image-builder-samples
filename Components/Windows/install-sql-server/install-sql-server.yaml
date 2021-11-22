@@ -1,0 +1,124 @@
+name: 'SQL Server on Windows EC2'
+description: 'Installs SQL Server and SSMS from your own ISO/bucket'
+schemaVersion: 1.0
+parameters:
+  - s3bucket:
+      type: string
+      default: 'installs-986614378968'
+      description: Name of the S3 bucket holding ISO and ConfigurationFile.ini
+  - sqliso:
+      type: string
+      default: 'en_sql_server_2019_enterprise_x64_dvd_c7d70add.iso'
+      description: Name of the ISO media on the S3 bucket
+
+constants:
+  - sqlmediafolder:
+      type: string
+      value: 'C:\Support'
+
+phases:
+  - name: build
+    steps:
+      - name: create_SupportFolder
+        action: CreateFolder
+        inputs:
+          - path: '{{ sqlmediafolder }}'
+            overwrite: false
+      - name: download_SQLMedia
+        action: S3Download
+        onFailure: Abort
+        inputs:
+          - source: s3://{{ s3bucket }}/{{ sqliso }}
+            destination: '{{ sqlmediafolder }}\{{ sqliso }}'
+      - name: download_SQLConfiguration
+        action: S3Download
+        onFailure: Abort
+        inputs:
+          - source: s3://{{ s3bucket }}/ConfigurationFile.ini
+            destination: '{{ sqlmediafolder }}\ConfigurationFile.ini'
+      - name: download_SSMS
+        action: S3Download
+        onFailure: Abort
+        inputs:
+          - source: s3://{{ s3bucket }}/SSMS-Setup-ENU.exe
+            destination: '{{ sqlmediafolder }}\SSMS-Setup-ENU.exe'
+      - name: add_SQLFirewall_Rules
+        action: ExecutePowerShell
+        onFailure: Abort
+        inputs:
+          commands:
+            - |
+              Try {
+                  New-NetFirewallRule -DisplayName 'Allow inbound TCP Port 1433' -Direction Inbound -LocalPort 1433 -Protocol TCP -Action Allow
+                  New-NetFirewallRule -DisplayName 'Allow outbound TCP Port 1433' -Direction Outbound -LocalPort 1433 -Protocol TCP -Action Allow
+                  New-NetFirewallRule -DisplayName 'Allow inbound TCP Port 1434' -Direction Inbound -LocalPort 1434 -Protocol TCP -Action Allow
+                  New-NetFirewallRule -DisplayName 'Allow outbound TCP Port 1434' -Direction Outbound -LocalPort 1434 -Protocol TCP -Action Allow
+              }
+              Catch {
+                  "Failed to added the Firewall rules: $_.Exception.Message"
+                  Exit 1
+              }
+      - name: extract_SQLMedia
+        action: ExecutePowerShell
+        onFailure: Abort
+        inputs:
+          commands:
+            -  |
+              Try {
+                  Copy-Item -Path (Join-Path -Path (Get-PSDrive -Name ((Mount-DiskImage -ImagePath '{{ sqlmediafolder }}\{{ sqliso }}' -PassThru) | Get-Volume).DriveLetter).Root -ChildPath '*') -Destination {{ sqlmediafolder }} -Recurse
+                  Dismount-DiskImage -ImagePath '{{ sqlmediafolder }}\{{ sqliso }}'
+                  Remove-Item '{{ sqlmediafolder }}\{{ sqliso }}'
+              }
+              Catch {
+                  "Failed to extract SQL Media: $_.Exception.Message"
+                  Exit 1
+              }
+      - name: run_SSMSInstaller
+        action: ExecutePowerShell
+        onFailure: Abort
+        inputs:
+          commands:
+            - |
+              Try {
+                  Start-Process -Wait "{{ sqlmediafolder }}\SSMS-Setup-ENU.exe" -ArgumentList "/install /quiet /norestart" -PassThru
+              }
+              Catch {
+                  "Failed to install SSMS: $_.Exception.Message"
+                  Exit 1
+              }
+      - name: run_SQLInstaller
+        action: ExecutePowerShell
+        onFailure: Abort
+        inputs:
+          commands:
+            - |
+              Try {
+                  Start-Process -Wait "{{ sqlmediafolder }}\setup.exe" -ArgumentList "/IACCEPTSQLSERVERLICENSETERMS /ConfigurationFile={{ sqlmediafolder }}\ConfigurationFile.ini" -PassThru
+              }
+              Catch {
+                  "Failed to install SQLServer: $_.Exception.Message"
+                  Exit 1
+              }
+      - name: 'SystemReboot'
+        action: Reboot
+  - name: validate
+    steps:
+    - name: validateSQLInstall
+      action: ExecutePowerShell
+      onFailure: Abort
+      inputs:
+        commands:
+          - |
+            $softwareList = @("Microsoft SQL Server 2019 Setup", "SQL Server Management Studio")
+
+            foreach ( $software in $softwareList ) {
+              $installed = (Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object { $_.DisplayName -Match $software })
+
+              If (-Not $installed) {
+                Write-Host "'$software' not is installed.";
+                Exit 1
+              }
+              Else {
+                Write-Host "'$software' is installed."
+              }
+            }
