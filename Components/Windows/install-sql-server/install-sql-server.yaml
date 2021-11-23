@@ -1,15 +1,15 @@
 name: 'SQL Server on Windows EC2'
-description: 'Installs SQL Server and SSMS from your own ISO/bucket'
+description: 'Installs SQL Server and SSMS from your own media using a configuration file'
 schemaVersion: 1.0
 parameters:
   - s3bucket:
       type: string
-      default: 'installs-986614378968'
-      description: Name of the S3 bucket holding ISO and ConfigurationFile.ini
+      default: ''
+      description: Name of the S3 bucket holding the SQL ISO and ConfigurationFile.ini
   - sqliso:
       type: string
-      default: 'en_sql_server_2019_enterprise_x64_dvd_c7d70add.iso'
-      description: Name of the ISO media on the S3 bucket
+      default: ''
+      description: Name of the ISO file on the S3 bucket
 
 constants:
   - sqlmediafolder:
@@ -37,10 +37,11 @@ phases:
           - source: s3://{{ s3bucket }}/ConfigurationFile.ini
             destination: '{{ sqlmediafolder }}\ConfigurationFile.ini'
       - name: download_SSMS
-        action: S3Download
+        action: WebDownload
+        maxAttempts: 3
         onFailure: Abort
         inputs:
-          - source: s3://{{ s3bucket }}/SSMS-Setup-ENU.exe
+          - source: 'https://aka.ms/ssmsfullsetup'
             destination: '{{ sqlmediafolder }}\SSMS-Setup-ENU.exe'
       - name: add_SQLFirewall_Rules
         action: ExecutePowerShell
