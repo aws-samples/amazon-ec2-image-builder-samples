@@ -1,6 +1,6 @@
 # Install SQL Server from Config + ISO Media on S3 for BYOL SQL
 
-This component installs SQL Server from your own Media/ISO, and using a sample configuration file to determine the installation settings. The component relies on two parameters, ```S3bucket``` and ```SQLiso``` to properly install SQL using Image Builder. This component has been tested with SQL Server 2019 Enterprise media, and Windows Server 2016 and 2019 as 
+This component installs SQL Server from your own Media/ISO, and using a sample configuration file to determine the installation settings. The component relies on two parameters, ```S3bucket``` and ```SQLiso``` to properly install SQL using Image Builder. This component has been tested with SQL Server 2019 Enterprise media and Windows Server 2016 and 2019.
 
 ## Prerequisites
 
@@ -23,3 +23,9 @@ For a more detailed error, check the Log stream that gets created on every outpu
 
 ### 403 Forbidden during S3Download step
 Make sure you have granted permissions for the IAM Role used by Image Builder to download from S3. By default, the EC2InstanceProfileForImageBuilder does not have S3 access. Attaching the AmazonS3ReadOnlyAccess managed policy is a quick fix, but can also scoped to the specific bucket that holds the ISO and Config for least privilege.
+
+### Cannot build Image from Server 2012 R2 base
+SQL Server 2019 is not supported on Windows Server 2012 R2, and the Validate phase will fail with ```Stdout: 'Microsoft SQL Server 2019 Setup' not is installed.```
+
+### Cannot build Image from Server 2022 base
+There seems to be an issue with PowerShell failing at extract_SQLMedia and will be corrected in a later release of the template.
