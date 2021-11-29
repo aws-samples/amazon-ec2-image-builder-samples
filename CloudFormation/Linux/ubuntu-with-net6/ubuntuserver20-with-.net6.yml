@@ -110,119 +110,6 @@ Resources:
       SecurityGroupIds:
         - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
 
-  # Create a custom EC2 Image Builder component that downloads and installs the latest .NET 5 preview. The component includes a
-  # validation step which will run after the install but before the image capture. Also included, is a test step which
-  # runs after the image is captured (EC2 Image Builder launches a new instance from the image and runs the test phase).
-  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html
-  InstallNET6Component:
-    Type: AWS::ImageBuilder::Component
-    Properties:
-      Name: NET6
-      Version: 0.0.1
-      Description: Install the latest .NET 6 preview.
-      ChangeDescription: First version
-      Platform: Linux
-      Data: |
-        name: InstallNET6
-        description: Downloads and Installs the latest .NET 6 preview
-        schemaVersion: 1.0
-        constants:
-          - InstallScriptSource:
-              type: string
-              value: https://aka.ms/install-dotnet-preview
-          - Version:
-              type: string
-              value: '6.0'
-          - TestFolder:
-              type: string
-              value: '/dotnet_test'
-        phases:
-          - name: build
-            steps:
-              - name: InstallFolder
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - echo "$HOME/dotnet_install"
-              - name: CreateInstallFolder
-                action: CreateFolder
-                inputs:
-                  - path: '{{ build.InstallFolder.outputs.stdout }}'
-              - name: DownloadInstallScript
-                action: WebDownload
-                inputs:
-                  - source: '{{ InstallScriptSource }}'
-                    destination: '{{ build.InstallFolder.outputs.stdout }}/install.sh'
-              - name: InstallNET6
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - 'set -e'
-                    - 'cd {{ build.InstallFolder.outputs.stdout }}'
-                    - 'sudo bash install.sh'
-              - name: Cleanup
-                action: DeleteFolder
-                inputs:
-                  - path: '{{ build.InstallFolder.outputs.stdout }}'
-                    force: true
-
-          - name: validate
-            steps:
-              - name: ValidateRuntimeInstall
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - |
-                      VERSION='{{ Version }}'
-                      echo "Invoking command: dotnet --list-runtimes | grep \"^Microsoft.NETCore.App $VERSION\""
-                      EXISTS=$(dotnet --list-runtimes | grep "^Microsoft.NETCore.App $VERSION")
-                      if [[ $? == 0 ]]; then
-                        echo "Found .NET runtime version $VERSION. Proceeding."
-                      else
-                        echo "Unable to find .NET runtime version $VERSION. Failing build."
-                        exit 1
-                      fi
-              - name: ValidateSDKInstall
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - |
-                      VERSION='{{ Version }}'
-                      echo "Invoking command: dotnet --list-sdks | grep \"^$VERSION\""
-                      EXISTS=$(dotnet --list-sdks | grep "^$VERSION")
-                      if [[ $? == 0 ]]; then
-                        echo "Found .NET SDK version $VERSION. Proceeding."
-                      else
-                        echo "Unable to find .NET SDK version $VERSION. Failing build."
-                        exit 1
-                      fi
-
-          - name: test
-            steps:
-              - name: CreateInstallFolder
-                action: CreateFolder
-                inputs:
-                  - path: '{{ TestFolder }}'
-              - name: GenerateSample
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - 'set -e'
-                    - 'cd {{ TestFolder }}'
-                    - 'DOTNET_CLI_HOME={{ TestFolder }} DOTNET_CLI_TELEMETRY_OPTOUT=1 HOME="/$(whoami)" dotnet new console --name sample'
-              - name: ValidateSample
-                action: ExecuteBash
-                inputs:
-                  commands:
-                    - |
-                      FILE={{ TestFolder }}/sample/sample.csproj
-                      if [ -e $FILE ]; then
-                        echo "Found generated sample project. Proceeding."
-                      else
-                        echo "Generated sample project '$FILE' does not exist. Failing test."
-                        exit 1
-                      fi
-
   # Recipe which references the latest (x.x.x) version of Ubuntu Server 20 AMI.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
   UbuntuServer20NET6ImageRecipe:
@@ -238,7 +125,7 @@ Resources:
         Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-server-20-lts-x86/x.x.x
       Components:
         - ComponentArn:
-            Ref: InstallNET6Component
+            Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/dotnet-sdk-linux/6.x.x
 
   # The CloudWatch LogGroup for the image build logs is provided to ensure the LogGroup is cleaned up if the stack is deleted.
   UbuntuServer20Net6LogGroup:
@@ -265,7 +152,7 @@ Resources:
   UbuntuServer20WithNET6Parameter:
     Type: AWS::SSM::Parameter
     Properties:
-      Description: Image Id for Ubuntu Server 20 With latest .NET 5 preview
+      Description: Image Id for Ubuntu Server 20 With latest .NET 6
       Name: /Test/Images/UbuntuServer20WithNET6
       Type: String
       Value:
