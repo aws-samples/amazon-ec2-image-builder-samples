@@ -4,7 +4,7 @@ This is a sample component that demonstrates how to download and execute a Chef 
 
 For more information about the installation script, review the Chef [documentation](https://docs.chef.io/packages/#chef-software-install-script).
 
-For more information on Chef Inspec, visit [https://docs.chef.io/inspec/](https://docs.chef.io/inspec/)
+For more information on Chef Inspec, visit [https://docs.chef.io/inspec/](https://docs.chef.io/inspec/).
 
 ## Prerequisites
 
@@ -16,9 +16,9 @@ For more information on Chef Inspec, visit [https://docs.chef.io/inspec/](https:
 
 1. Upload the ```inspec-test-cases.rb``` file to an S3 bucket.
 2. Within the ```inspec-test-linux-component.yml``` document, update the ```<S3_PATH_TO_INSPEC_TEST.RB>``` variable in the ```ComplianceScriptSource``` constants with the S3 path where you uploaded the ```inspec-test-cases.rb``` document.
-3. Within the ```inspec-test-linux-component.yml``` document, update the ```<S3_PATH_TO_INSPEC_REPORT_LOCATION>``` in the step ```UploadComplianceReportToS3``` with the name of the S3 bucket where the Chef Inspec test results should be uploaded to
+3. Within the ```inspec-test-linux-component.yml``` document, update the ```<S3_PATH_TO_INSPEC_REPORT_LOCATION>``` in the step ```UploadComplianceReportToS3``` with the name of the S3 bucket where the Chef Inspec test results should be uploaded.
 4. Create a new Image Builder Test component with the contents of ```inspec-test-linux-component.yml```.
-5. Add the component to an image recipe that targets linux Server 2016
+5. Add the component to an image recipe that targets Linux server.
 6. Use the image recipe to create an image, either directly or with an image pipeline.
 
 After the successful completion of the image builder pipeline, the InSpec test report can be downloaded from the Amazon S3 location specified in the document.
