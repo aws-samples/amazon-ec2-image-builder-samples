@@ -1,0 +1,77 @@
+name: Chef Inspec Execution on Linux
+description: This is a sample component that demonstrates how to download and execute a Chef Inspec against a Linux server. This sample will install Chef using the Chef Inspec Software Install script. For more information about the installation script, review the documentation at https://docs.chef.io/inspec/install/
+schemaVersion: 1.0
+constants:
+  - ChefInspecInstallationScriptSource:
+      type: string
+      value: https://omnitruck.chef.io/install.sh
+  - ComplianceScriptSource:
+      type: string
+      value: 's3://<S3_PATH_TO_INSPEC_TEST.RB>'
+
+phases:
+  - name: test
+    steps:
+      - name: CreateWorkingDirector
+        action: CreateFolder
+        onFailure: Abort
+        inputs:
+          - path: '/tmp/inspec_test/'
+      - name: InstallationScript
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "/tmp/inspec_test/chef_install.sh"
+      - name: DownloadInstallationScript
+        action: WebDownload
+        inputs:
+          - source: '{{ ChefInspecInstallationScriptSource }}'
+            destination: '{{ test.InstallationScript.outputs.stdout }}'
+      - name: SetInstallationScriptExecutable
+        action: SetFilePermissions
+        inputs:
+          - path: '{{ test.InstallationScript.outputs.stdout }}'
+            permissions: 0700
+      - name: InstallChefClient
+        action: ExecuteBash
+        inputs:
+          commands:
+            - sudo '{{ test.InstallationScript.outputs.stdout }}' -s -- -c stable -P inspec
+      - name: ComplianceScriptDestination
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "/tmp/inspec_test/compliance.rb"
+      - name: ComplianceReportName
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo /tmp/inspec_test/reports/compliance_$(date '+%Y%m%d_%H%M').json
+      - name: DownloadComplianceScript
+        action: S3Download
+        inputs:
+          - source: '{{ ComplianceScriptSource }}'
+            destination: '{{ test.ComplianceScriptDestination.outputs.stdout }}'
+      - name: CheckCompliance
+        action: ExecuteBinary
+        inputs:
+          path: inspec
+          arguments:
+            - 'exec'
+            - '{{ test.ComplianceScriptDestination.outputs.stdout }}'
+            - '--reporter'
+            - 'json:{{ test.ComplianceReportName.outputs.stdout }}'
+            - '--chef-license'
+            - 'accept-no-persist'
+            - '--no-distinct-exit'
+      - name: UploadComplianceReportToS3
+        action: S3Upload
+        maxAttempts: 3
+        inputs:
+          - source: /tmp/inspec_test/reports/*
+            destination: s3://<S3_PATH_TO_INSPEC_REPORT_LOCATION>'
+      - name: Cleanup
+        action: DeleteFile
+        inputs:
+          - path: '/tmp/inspec_test/'
+            force: true
