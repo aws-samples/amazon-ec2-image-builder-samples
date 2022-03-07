@@ -291,8 +291,6 @@ Resources:
         PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
         ScheduleExpression: 'cron(0 10 * * ? *)'
       Status: ENABLED
-      Tags:
-        Purpose: PowerShellSummitContainerDemo
 
 Outputs:
   # This export can be used to create ECS Task Definitions that reference the output image.
