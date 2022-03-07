@@ -1,0 +1,300 @@
+---
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Windows 2019 container image to host
+  a .NET web application, and publishes the image to the an Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is
+  scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day. The build will only run if dependent resources have been updated.
+
+Parameters:
+  CustomSubnetId:
+    Type: String
+    Default: ""
+    Description: If you do not have a default VPC, or want to use a different VPC, specify the ID of a subnet in which to place the instance used to customize your EC2 container image. If not specified, a subnet from your default VPC will be used.
+
+  CustomSecurityGroupId:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Required if you specified a custom subnet ID. Comma-delimited list of one or more IDs of security groups belonging to the VPC to associate with the instance used to customize your EC2 container image.
+
+  BuildInstanceType:
+    Type: CommaDelimitedList
+    Default: 'c5.xlarge'
+    Description: Comma-delimited list of one or more instance types to select from when building the image. Image Builder will select a type based on availability. The supplied default is compatible with the AWS Free Tier.
+
+  TargetECRRepository:
+    Description: Name of the target ECR repository to push container image to
+    Type: String
+    Default: windows-webapp
+
+  ImageTag:
+    Description: Tag for the output docker image.
+    Type: String
+    Default: latest
+
+  ResourceName:
+    Type: String
+    Default: windows-webapp
+    Description: A name to use for all Image Builder resources
+
+  ResourceVersion:
+    Type: String
+    Default: '1.0.0'
+    Description: The version to use for Image Builder resources
+
+  DotnetSourceZipFile:
+    Type: String
+    Default: https://github.com/genericinternetcompany/windows-webapp/releases/download/1.0.0/windows-webapp.zip
+    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+
+  DotnetSDKBinaryURL:
+    Type: String
+    Default: https://download.visualstudio.microsoft.com/download/pr/89f0ba2a-5879-417b-ba1d-debbb2bde208/b22a9e9e4d513e4d409d2222315d536b/dotnet-sdk-6.0.200-win-x64.exe
+    Description: An S3 URI to a exe file containing a .NET SDK
+
+  WebsiteName:
+    Type: String
+    Default: 'windows-webapp'
+    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+  
+  ApplicationPort:
+    Type: String
+    Default: '5000'
+    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+
+Conditions:
+  UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
+
+Resources:
+  # Create an S3 Bucket for logs.
+  # When deleting the stack, make sure to empty the bucket first.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
+    # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
+    # DeletionPolicy: Retain
+
+  # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
+  # When deleting this stack, make sure to empty the repository first. Otherwise, you
+  # will experience a status of "DELETE_FAILED" in CloudFormation.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ecr-repository.html
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref TargetECRRepository
+
+  # By default, AWS Services do not have permission to perform actions on your instances. This grants
+  # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
+  # https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-setting-up.html
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Role to be used by EC2 instance during image build.
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds'
+        # The S3 policy is used to download the zip file from the provided S3 URI.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3ReadOnlyAccess'
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /executionServiceEC2Role/
+
+  # Policy to allow the instance to write to the S3 bucket (via instance role / instance profile).
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-policy.html
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Metadata:
+      Comment: Allows the instance to save log files to an S3 bucket.
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - Ref: InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  # To pass the InstanceRole to an EC2 instance, we need an InstanceProfile.
+  # This profile will be used during the image build process.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - Ref: InstanceRole
+
+  # Specifies the infrastructure within which to build and test your image.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
+  Infrastructure:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: 'This infrastructure configuration will launch into our custom ImageBuilder VPC'
+      InstanceProfileName: !Ref InstanceProfile
+      # Set of one or more instance types to use when building the instance. Image Builder will select a type
+      # based on availability.
+      InstanceTypes:
+        !Ref BuildInstanceType
+      # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+          S3KeyPrefix: !Sub 'imagebuilder-${AWS::StackName}'
+      # If you would like to keep the instance running after a failed build, set TerminateInstanceOnFailure to false.
+      # TerminateInstanceOnFailure: false
+      # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
+      # security groups to be associated with the build instance.
+      SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds:
+        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+
+  # This component will download the .NET web application from the provided S3 URI. The application will
+  # be extracted to disk and the execute bit set on the application.
+  # A startup `rc.local` script is not required as the dockerfile will specity the container's entry point.
+  Component:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Ref ResourceName
+      Version: !Ref ResourceVersion
+      Platform: Windows
+      Description: Downloads and installs a .NET web application.
+      ChangeDescription: 'Created with CloudFormation'
+      Data: !Sub |
+        schemaVersion: 1.0
+        constants:
+          - DotnetSourceZipFile:
+              type: string
+              value: '${DotnetSourceZipFile}'
+          - DotnetSDKUrl:
+              type: string
+              value: '${DotnetSDKBinaryURL}'
+          - ApplicationPort:
+              type: string
+              value: '${ApplicationPort}'
+        phases:
+          - name: build
+            steps:
+              - name: DownloadDotNetCore6
+                action: WebDownload
+                maxAttempts: 3
+                inputs:
+                  - source: '{{ DotnetSDKUrl }}'
+                    destination: 'c:\\dotnet-sdk-win-x64.exe'
+              - name: InstallDotNetCore6
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - c:\\dotnet-sdk-win-x64.exe /install /quiet /norestart
+              - name: DownloadWebsiteZipFile
+                action: WebDownload
+                inputs:
+                  - source: '{{ DotnetSourceZipFile }}'
+                    destination: 'c:\\windows-webapp.zip'
+              - name: ExtractWebsite
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - Expand-Archive -Force -Path 'c:\\windows-webapp.zip' -DestinationPath 'c:\\windows-webapp\\'
+                    - $env:ASPNETCORE_URLS = '{{ ApplicationPort }}'
+
+              
+
+  # Recipe which references the `ubuntu-18-x86-18-04` parent image. This also includes component references
+  # to ensure the container is updated, and installed the .NET runtime and the custom component.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-containerrecipe.html
+  Recipe:
+    Type: AWS::ImageBuilder::ContainerRecipe
+    Properties:
+      Name: !Ref ResourceName
+      Version: !Ref ResourceVersion
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-x86-core-ltsc2019-amd64/x.x.x'
+      # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom
+      # via the "PlatformOverride" property.
+      ContainerType: DOCKER
+      Components:
+        - ComponentArn: !Ref Component
+      TargetRepository:
+        Service: ECR
+        RepositoryName: !Ref TargetECRRepository
+      # You can create your Dockerfile from scratch, or by using the Dockerfile template default settings.
+      # This example uses the template default settings, which provides variables for your parent image, environments, and components.
+      # These variables will be replaced with Image Builder generated scripts at build time.
+      # In this Dockerfile, `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT` is required to run .NET, and the entrypoint
+      # is configured with the .NET application.
+      DockerfileTemplateData: !Sub |
+        FROM {{{ imagebuilder:parentImage }}}
+        {{{ imagebuilder:environments }}}
+        {{{ imagebuilder:components }}}
+        EXPOSE ${ApplicationPort}
+        ENTRYPOINT ["dotnet", "c:\\windows-webapp\\${WebsiteName}.dll"]
+      WorkingDirectory: C:/
+
+  # A CloudWatch LogGroup that maps to where the image creation logs will be published.
+  # This ensures the retention is configured, and that the group is removed on stack deletion.
+  RecipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/imagebuilder/${ResourceName}'
+      RetentionInDays: 7
+
+  # Allows you to specify the name and description of your output container image and settings for tagging and sharing
+  # to a target ECR repository in a specific region.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html
+  Distribution:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Ref ResourceName
+      Description: 'This distribution configuration will deploy our container image to the desired target ECR repository in the current region'
+      Distributions:
+        - Region: !Ref 'AWS::Region'
+          ContainerDistributionConfiguration:
+            TargetRepository:
+              Service: ECR
+              RepositoryName: !Ref TargetECRRepository
+            # By default, if no container tags are specified, the "Image tags" value in ECR will reflect the image build version (e.g. 1.0.0-1),
+            # which can be found by navigating to EC2 ImageBuilder in the AWS Management Console.
+            ContainerTags:
+              - !Ref ImageTag
+
+  # The pipeline is scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day.
+  # The build will only run if dependencies have been updated.
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagepipeline.html
+  Pipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      ContainerRecipeArn: !Ref Recipe
+      Description: A pipeline to automate creation of the container
+      DistributionConfigurationArn: !Ref Distribution
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 60
+      InfrastructureConfigurationArn: !Ref Infrastructure
+      Name: !Ref ResourceName
+      Schedule:
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+        ScheduleExpression: 'cron(0 10 * * ? *)'
+      Status: ENABLED
+
+Outputs:
+  # This export can be used to create ECS Task Definitions that reference the output image.
+  WindowsDotnetWebsiteImage:
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${ECRRepository}:${ImageTag}'
+    Export:
+      Name: WindowsDotnetWebsiteImage
