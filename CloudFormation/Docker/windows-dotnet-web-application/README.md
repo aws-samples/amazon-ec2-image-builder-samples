@@ -1,6 +1,6 @@
 # Windows Server 2019 Container Image Pipeline for hosting a .NET web application
 
-This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build an Windows Server 2019 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
+This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build a Windows Server 2019 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
 
 ***Internet connectivity is required in your default VPC*** to pull the source image by digest from a Docker Hub repository. If you do not have a default VPC, or want to use a custom VPC, you will need to specify a subnet ID and one or more security group IDs in the VPC as parameters when you create a stack based on this template.
 
