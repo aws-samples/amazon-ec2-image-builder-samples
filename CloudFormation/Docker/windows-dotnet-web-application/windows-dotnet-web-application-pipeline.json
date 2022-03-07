@@ -28,6 +28,10 @@
     "ParameterValue": "1.0.0"
   },
   {
+  "ParameterKey": "ApplicationPort",
+  "ParameterValue": "5000"
+  },
+  {
     "ParameterKey": "DotnetSourceZipFile",
     "ParameterValue": "https://github.com/genericinternetcompany/windows-webapp/releases/download/1.0.0/windows-webapp.zip"
   },

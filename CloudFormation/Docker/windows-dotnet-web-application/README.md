@@ -45,22 +45,16 @@ dotnet new webApp -o sample-web-application --no-https
 cd sample-web-application
 ```
 
-The ```Program.cs``` file needs to be updated to listen on all network interfaces. For example, the following addition will enable the application to listen on TCP/5000.
+You can set the port and ip address by updating the Environment Variable ```ASPNETCORE_URLS```
 
-In the `Program.cs` file, add ```webBuilder.UseUrls("http://*:5000");``` after the `UserStartup<>` line. The `CreateDefaultBuilder` should include content similar to this:
+Example:
 
-```cs
-                .ConfigureWebHostDefaults(webBuilder =>
-                {
-                    webBuilder.UseStartup<Startup>();
-                    webBuilder.UseUrls("http://*:5000");
-                });
-```
+ docker run -p 5000:5000 -e ASPNETCORE_URLS="http://*:5000" <container_name>
 
 Next, the .NET application needs to be compiled for Windows 2019.
 
 ```shell
-dotnet publish --configuration release --self-contained
+dotnet publish --configuration release
 ```
 
 The compiled application should exist in the ```./bin/release/net6.0/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.tar.gz``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.

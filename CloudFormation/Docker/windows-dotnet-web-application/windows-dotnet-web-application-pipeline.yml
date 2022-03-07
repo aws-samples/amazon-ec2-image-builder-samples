@@ -58,6 +58,11 @@ Parameters:
     Type: String
     Default: 'windows-webapp'
     Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+  
+  ApplicationPort:
+    Type: String
+    Default: '5000'
+    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
 
 Conditions:
   UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
@@ -180,6 +185,9 @@ Resources:
           - DotnetSDKUrl:
               type: string
               value: '${DotnetSDKBinaryURL}'
+          - ApplicationPort:
+              type: string
+              value: '${ApplicationPort}'
         phases:
           - name: build
             steps:
@@ -204,6 +212,8 @@ Resources:
                 inputs:
                   commands:
                     - Expand-Archive -Force -Path 'c:\\windows-webapp.zip' -DestinationPath 'c:\\windows-webapp\\'
+                    - $env:ASPNETCORE_URLS = '{{ ApplicationPort }}'
+
               
 
   # Recipe which references the `ubuntu-18-x86-18-04` parent image. This also includes component references
@@ -232,7 +242,7 @@ Resources:
         FROM {{{ imagebuilder:parentImage }}}
         {{{ imagebuilder:environments }}}
         {{{ imagebuilder:components }}}
-        EXPOSE 5000
+        EXPOSE ${ApplicationPort}
         ENTRYPOINT ["dotnet", "c:\\windows-webapp\\${WebsiteName}.dll"]
       WorkingDirectory: C:/
 
