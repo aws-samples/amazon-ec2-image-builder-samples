@@ -4,7 +4,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Ubuntu 18.04 container image to host
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Windows 2019 container image to host
   a .NET web application, and publishes the image to the an Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is
   scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day. The build will only run if dependent resources have been updated.
 
@@ -21,13 +21,13 @@ Parameters:
 
   BuildInstanceType:
     Type: CommaDelimitedList
-    Default: 't2.micro'
+    Default: 'c5.xlarge'
     Description: Comma-delimited list of one or more instance types to select from when building the image. Image Builder will select a type based on availability. The supplied default is compatible with the AWS Free Tier.
 
   TargetECRRepository:
     Description: Name of the target ECR repository to push container image to
     Type: String
-    Default: sample-repository
+    Default: windows-webapp
 
   ImageTag:
     Description: Tag for the output docker image.
@@ -36,7 +36,7 @@ Parameters:
 
   ResourceName:
     Type: String
-    Default: UbuntuDotnetWebsite
+    Default: windows-webapp
     Description: A name to use for all Image Builder resources
 
   ResourceVersion:
@@ -44,19 +44,19 @@ Parameters:
     Default: '1.0.0'
     Description: The version to use for Image Builder resources
 
-  DotnetS3SourceTarFile:
+  DotnetSourceZipFile:
     Type: String
-    Default: s3://awspearca-demo-us-west-2/powershell-summit-2021/hello-powershell-summit-ubuntu.tar.gz
+    Default: https://github.com/genericinternetcompany/windows-webapp/releases/download/1.0.0/windows-webapp.zip
     Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
 
-  DotnetBinaryName:
+  DotnetSDKBinaryURL:
     Type: String
-    Default: 'hello-powershell-summit'
-    Description: The .NET binary file to execute. This file must exist within the root of the zip file referenced in `DotnetS3SourceTarFile`.
+    Default: https://download.visualstudio.microsoft.com/download/pr/89f0ba2a-5879-417b-ba1d-debbb2bde208/b22a9e9e4d513e4d409d2222315d536b/dotnet-sdk-6.0.200-win-x64.exe
+    Description: An S3 URI to a exe file containing a .NET SDK
 
   WebsiteName:
     Type: String
-    Default: 'DotnetWebsiteDemo'
+    Default: 'windows-webapp'
     Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
 
 Conditions:
@@ -80,8 +80,6 @@ Resources:
     Type: AWS::ECR::Repository
     Properties:
       RepositoryName: !Ref TargetECRRepository
-      ImageScanningConfiguration:
-        ScanOnPush: 'true'
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
@@ -170,60 +168,43 @@ Resources:
     Properties:
       Name: !Ref ResourceName
       Version: !Ref ResourceVersion
-      Platform: Linux
+      Platform: Windows
       Description: Downloads and installs a .NET web application.
       ChangeDescription: 'Created with CloudFormation'
       Data: !Sub |
         schemaVersion: 1.0
         constants:
-          - Source:
+          - DotnetSourceZipFile:
               type: string
-              value: '${DotnetS3SourceTarFile}'
-          - DotnetBinaryName:
+              value: '${DotnetSourceZipFile}'
+          - DotnetSDKUrl:
               type: string
-              value: '${DotnetBinaryName}'
-          - WebsiteName:
-              type: string
-              value: '${WebsiteName}'
+              value: '${DotnetSDKBinaryURL}'
         phases:
           - name: build
             steps:
-              - name: EnsureWebsiteFolderDoesNotExist
-                action: DeleteFolder
+              - name: DownloadDotNetCore6
+                action: WebDownload
+                maxAttempts: 3
                 inputs:
-                  - path: '/{{ WebsiteName }}'
-                    force: true
-              - name: CreateWebsiteFolder
-                action: CreateFolder
-                inputs:
-                  - path: '/{{ WebsiteName }}'
-                    permissions: 0777
-              - name: TarFileName
-                action: ExecuteBash
+                  - source: '{{ DotnetSDKUrl }}'
+                    destination: 'c:\\dotnet-sdk-win-x64.exe'
+              - name: InstallDotNetCore6
+                action: ExecutePowerShell
                 inputs:
                   commands:
-                    - 'source="{{ Source }}"'
-                    - echo ${!source##*/}
-              - name: DownloadTarFile
-                action: S3Download
+                    - c:\\dotnet-sdk-win-x64.exe /install /quiet /norestart
+              - name: DownloadWebsiteZipFile
+                action: WebDownload
                 inputs:
-                  - source: '{{ Source }}'
-                    destination: '/{{ WebsiteName }}/{{ build.TarFileName.outputs.stdout }}'
+                  - source: '{{ DotnetSourceZipFile }}'
+                    destination: 'c:\\windows-webapp.zip'
               - name: ExtractWebsite
-                action: ExecuteBash
+                action: ExecutePowerShell
                 inputs:
                   commands:
-                    - cd /{{ WebsiteName }}
-                    - tar zxvf /{{ WebsiteName }}/{{ build.TarFileName.outputs.stdout }}
-              - name: SetWebsiteExecutable
-                action: SetFilePermissions
-                inputs:
-                  - path: '/{{ WebsiteName }}/{{ DotnetBinaryName }}'
-                    permissions: 0755
-              - name: Cleanup
-                action: DeleteFile
-                inputs:
-                  - path: '/{{ WebsiteName }}/{{ build.TarFileName.outputs.stdout }}'
+                    - Expand-Archive -Force -Path 'c:\\windows-webapp.zip' -DestinationPath 'c:\\windows-webapp\\'
+              
 
   # Recipe which references the `ubuntu-18-x86-18-04` parent image. This also includes component references
   # to ensure the container is updated, and installed the .NET runtime and the custom component.
@@ -233,13 +214,11 @@ Resources:
     Properties:
       Name: !Ref ResourceName
       Version: !Ref ResourceVersion
-      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-18-x86-18-04/x.x.x'
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-x86-core-ltsc2019-amd64/x.x.x'
       # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom
       # via the "PlatformOverride" property.
       ContainerType: DOCKER
       Components:
-        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
-        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/dotnet-runtime-linux/5.x.x'
         - ComponentArn: !Ref Component
       TargetRepository:
         Service: ECR
@@ -251,11 +230,11 @@ Resources:
       # is configured with the .NET application.
       DockerfileTemplateData: !Sub |
         FROM {{{ imagebuilder:parentImage }}}
-        ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
         {{{ imagebuilder:environments }}}
         {{{ imagebuilder:components }}}
-        CMD "/${WebsiteName}/${DotnetBinaryName}"
-      WorkingDirectory: /tmp
+        EXPOSE 5000
+        ENTRYPOINT ["dotnet", "c:\\windows-webapp\\${WebsiteName}.dll"]
+      WorkingDirectory: C:/
 
   # A CloudWatch LogGroup that maps to where the image creation logs will be published.
   # This ensures the retention is configured, and that the group is removed on stack deletion.
@@ -307,7 +286,7 @@ Resources:
 
 Outputs:
   # This export can be used to create ECS Task Definitions that reference the output image.
-  UbuntuDotnetWebsiteImage:
+  WindowsDotnetWebsiteImage:
     Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.${AWS::URLSuffix}/${ECRRepository}:${ImageTag}'
     Export:
-      Name: UbuntuDotnetWebsiteImage
+      Name: WindowsDotnetWebsiteImage

@@ -13,7 +13,7 @@
   },
   {
     "ParameterKey": "TargetECRRepository",
-    "ParameterValue": "sample-repository"
+    "ParameterValue": "windows-webapp"
   },
   {
     "ParameterKey": "ImageTag",
@@ -21,22 +21,22 @@
   },
   {
     "ParameterKey": "ResourceName",
-    "ParameterValue": "UbuntuDotnetWebsite"
+    "ParameterValue": "windows-webapp"
   },
   {
     "ParameterKey": "ResourceVersion",
     "ParameterValue": "1.0.0"
   },
   {
-    "ParameterKey": "DotnetS3SourceZipFile",
-    "ParameterValue": "s3://< Insert your bucket name here >/sample-web-application.tar.gz"
+    "ParameterKey": "DotnetSourceZipFile",
+    "ParameterValue": "https://github.com/genericinternetcompany/windows-webapp/releases/download/1.0.0/windows-webapp.zip"
   },
   {
-    "ParameterKey": "DotnetBinaryName",
-    "ParameterValue": "sample-web-application"
+    "ParameterKey": "DotnetSDKBinaryURL",
+    "ParameterValue": "https://download.visualstudio.microsoft.com/download/pr/89f0ba2a-5879-417b-ba1d-debbb2bde208/b22a9e9e4d513e4d409d2222315d536b/dotnet-sdk-6.0.200-win-x64.exe"
   },
   {
     "ParameterKey": "WebsiteName",
-    "ParameterValue": "SampleDotnetWebApplication"
+    "ParameterValue": "windows-webapp"
   }
 ]
