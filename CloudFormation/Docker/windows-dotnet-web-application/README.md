@@ -57,12 +57,11 @@ Next, the .NET application needs to be compiled for Windows 2019.
 dotnet publish --configuration release
 ```
 
-The compiled application should exist in the ```./bin/release/net6.0/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.tar.gz``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.
+The compiled application should exist in the ```./bin/release/net6.0/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.zip``` file, from there you can copy the archive to your release management software or public storage.
 
 ```shell
 cd bin/release/net6.0/publish
-tar -czf ~/sample-web-application.tar.gz .
-aws s3 cp sample-web-application.tar.gz s3://< Insert your bucket name here >/sample-web-application.tar.gz
+Compress-Archive -Path ./* -DestinationPath C:\path\to\windows-testapp.zip
 ```
 
 Next, update the CloudFormation parameters .json file (```windows-dotnet-web-application-pipeline.json```) with the S3 object used in the AWS CLI command.
@@ -72,7 +71,7 @@ Next, update the CloudFormation parameters .json file (```windows-dotnet-web-app
 #### AWS Management Console
 
 1. Upload the ```windows-dotnet-web-application-pipeline.yml``` template to CloudFormation.
-2. Update the stack parameters as desired, ensuring the ```DotnetS3SourceTarFile``` parameter points to the S3 location used when uploading the .NET web application to S3.
+2. Update the stack parameters as desired, ensuring the ```DotnetSourceZipFile``` parameter points to the S3 location used when uploading the .NET web application to S3.
 3. You will see a checkbox informing you that the stack creates IAM resources. Read and check the box.
 4. Wait for the stack to build.
 5. Once built, a new Image Builder pipeline will exist. You can view this in the Image Builder console, and optionally trigger a manual execution of the pipeline to start the first image creation.
