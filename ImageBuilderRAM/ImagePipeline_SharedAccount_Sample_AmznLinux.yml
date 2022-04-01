@@ -1,0 +1,387 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  IamEC2IBRoleName:
+    Description: IAM Role for EC2ImageBuilder Instance Profile to be attached to EC2 used as BuildServer
+    Type: String
+    Default: EC2ImageBuilderRole
+
+  ImageBuilderSNSTopicName:
+    Description: ImageBuilder SNS Topic Name
+    Type: String
+    Default: "ImageBuilderNotifications"
+  
+  NotificationEmail:
+    Description: Email address to receieve notifications
+    Type: String
+    Default: "email@example.com"
+ 
+  SubnetId:
+    Description: Subnet Id that will be used to spin up the build server needs access to public internet 
+    Type: AWS::EC2::Subnet::Id
+    
+  SecurityGroupIds:
+    Description: Security Group Id that will be attached to build server
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    
+  InstanceTypes:
+    Type: CommaDelimitedList
+    AllowedValues:
+      - t3.small
+      - t3.medium
+      - c5.large
+      - m5.large
+      - r5.large
+
+  BaseImage:
+    Type: String
+    Default: amazon-linux-2-x86/x.x.x
+
+  AppAccountId:
+    Type: String
+    AllowedPattern: ^\d{12}$
+    ConstraintDescription: 12 Digit Account number of the App Account
+    Default: 123456789100
+
+  AdminPermissionSetName:
+    Type: String
+    Description: Admin Access Permission set Name deployed via AWS SSO
+    Default: AWS_AdministratorAccess
+
+
+Resources:
+
+  GetSSORoleArnRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ lambda.amazonaws.com ]
+            Action: [ sts:AssumeRole ]
+      ManagedPolicyArns: 
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: Lambda
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:ListRoles
+                Resource: '*'
+    
+  GetSSORoleArnLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Get-Account-AdminSSORoleArn
+      Runtime: python3.8
+      Handler: index.handler
+      MemorySize: 128
+      Role: !GetAtt GetSSORoleArnRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: !Sub |
+          import traceback
+          import boto3
+          import cfnresponse
+          ADMIN_PERMISSION_SET = "${AdminPermissionSetName}"
+          iam = boto3.client('iam')
+
+          def handler(event, context):
+            print(f'event is {event}')
+            response_payload = {}
+            response_status = cfnresponse.FAILED
+            physical_resource_id = 'ssoadmin'
+
+            try:
+              if event['RequestType'] == 'Delete':
+                # Nothing to delete:
+                response_status = cfnresponse.SUCCESS
+              elif event['RequestType'] in ('Create', 'Update'):
+                resource_properties = event['ResourceProperties']
+                # Get SSO Admin Role:
+                paginator = iam.get_paginator('list_roles')
+
+                for page in paginator.paginate():
+                  for role in page['Roles']:
+                    if(f"AWSReservedSSO_{ADMIN_PERMISSION_SET}" in role['Arn']):
+                      arn = role['Arn']
+
+                response_payload['SSOAdminArn'] = arn
+                response_status = cfnresponse.SUCCESS
+
+            except Exception as e:
+              print('ERROR: Caught exception:')
+              print(e)
+              traceback.print_exc()
+
+            finally:
+              print('Sending cfn response')
+              cfnresponse.send(event, context, response_status,
+                              response_payload, physical_resource_id)
+  AdminSSORoleArn:
+    Type: Custom::GetSSOAdminRole
+    DependsOn: GetSSORoleArnLambda
+    Properties:
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn
+
+  ImageEncryptionKMSKey:
+    Type: AWS::KMS::Key
+    Metadata:
+      cfn-lint: { 
+        config: { 
+          ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
+          ignore_reasons: [ 
+            EIAMPolicyWildcardResource: "Requires full access to function",
+            EIAMPolicyActionWildcard: "Required in order to properly function"
+          ]
+        }
+      }
+    DependsOn: 
+      - EC2IBRole
+      - AdminSSORoleArn
+    Properties:
+      Description: A Symmetric KMS To Be used for Image Encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: key-default-1
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow administration of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt AdminSSORoleArn.SSOAdminArn
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "${EC2IBRole.Arn}"
+                - !Sub arn:aws:iam::${AppAccountId}:root
+            Action:
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlaintext
+            Resource: '*'
+          - Sid: Allow attachement of persistent resources
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub arn:aws:iam::${AppAccountId}:root
+            Action:
+              - kms:CreateGrant
+              - kms:ListGrants
+              - kms:RevokeGrant
+            Resource: '*'
+            Condition:
+              Bool:
+                kms:GrantIsForAWSResource: true
+
+
+  
+  KMSKeyAlias: 
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/ImageEncryptionKMSKey
+      TargetKeyId: !Ref ImageEncryptionKMSKey
+  
+  
+  ImageBuilderSNSTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      TopicName: !Ref ImageBuilderSNSTopicName
+  
+  ImageBuilderSNSPolicy:
+    Type: AWS::SNS::TopicPolicy
+    DependsOn: ImageBuilderSNSTopic
+    Properties:
+      PolicyDocument:
+        Id: AllowBackups
+        Version: '2012-10-17'
+        Statement:
+        - Sid: default-policy-id
+          Effect: Allow
+          Principal: 
+            AWS : "*"
+          Action: 
+            - SNS:GetTopicAttributes
+            - SNS:SetTopicAttributes
+            - SNS:AddPermission
+            - SNS:RemovePermission
+            - SNS:DeleteTopic
+            - SNS:Subscribe
+            - SNS:ListSubscriptionsByTopic
+            - SNS:Publish
+            - SNS:Receive
+          Resource: !Ref ImageBuilderSNSTopic
+          Condition: 
+            StringEquals:
+              AWS:SourceOwner: !Sub "${AWS::AccountId}"
+        - Sid: allow-backup-id
+          Effect: Allow
+          Principal:
+            Service: imagebuilder.amazonaws.com
+          Action: sns:Publish
+          Resource: !Ref ImageBuilderSNSTopic
+      Topics:
+      - !Ref ImageBuilderSNSTopic
+
+  ImageBuilderSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref NotificationEmail
+      Protocol: email
+      TopicArn: !Ref ImageBuilderSNSTopic
+
+  EC2IBRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn-lint: { 
+        config: { 
+          ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
+          ignore_reasons: [ 
+            EIAMPolicyWildcardResource: "Requires full access to function",
+            EIAMPolicyActionWildcard: "Required in order to properly function"
+          ]
+        }
+      }
+    Properties:
+      RoleName: !Ref IamEC2IBRoleName
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+      Policies:
+        - PolicyName: "EC2ImageBuilderPolicyForInspector"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - ssm:SendCommand
+                  - ec2:CreateTags
+                Resource: "*"
+
+  
+  EC2InstanceProfile:  
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      InstanceProfileName: !Sub "${EC2IBRole}Profile"
+      Path: /
+      Roles: 
+        - !Ref EC2IBRole
+
+#Create SNS Topic for Image Builder - SNS publish access for PipelineCloudFormationRole
+
+
+
+  AmznLinuxImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: AmznLinux2-ImageRecipe-Shared
+      Version: 1.0.4
+      ParentImage: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${BaseImage}"
+      Description: Image Recipe for AmznLinux2 Server Images
+      Components:
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/x.x.x"
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/python-3-linux/x.x.x"
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x"
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-high/x.x.x"
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-medium/x.x.x"
+        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-low/x.x.x"
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !Ref ImageEncryptionKMSKey
+            VolumeType: "gp3"
+            VolumeSize: 30
+      WorkingDirectory: "/tmp"
+      Tags:
+        ParentOS: AmznLinux2
+
+
+  InfraConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: InfraConfig-AmznLinux
+      InstanceProfileName: !Ref EC2InstanceProfile
+      InstanceTypes: !Ref InstanceTypes
+      SnsTopicArn: !Ref  ImageBuilderSNSTopic  
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: !Ref SecurityGroupIds
+      TerminateInstanceOnFailure: true
+  
+
+  DistributionConfig:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties: 
+      Name: AmznLinux-DistributionConfig
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: !Sub 'AmznLinux-Image-{{ imagebuilder:buildDate }}'
+            KmsKeyId: !Ref ImageEncryptionKMSKey
+            AmiTags:
+              Name: !Sub 'AmaznLinux-Image-{{ imagebuilder:buildVersion }}'
+              BuildDate: '{{ imagebuilder:buildDate }}'
+              BuildVersion: '{{ imagebuilder:buildVersion }}'
+            LaunchPermissionConfiguration:
+              UserIds: 
+                - !Sub ${AppAccountId}      
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      ImageRecipeArn: !GetAtt AmznLinuxImageRecipe.Arn
+      DistributionConfigurationArn: !GetAtt DistributionConfig.Arn
+      InfrastructureConfigurationArn: !GetAtt InfraConfig.Arn
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+        TimeoutMinutes: 90
+      Name: AmznLinuxImagePipeline
+      Status: ENABLED
+
+Outputs:
+  InfraConfigArn: 
+    Description: Infrastructure Config Arn
+    Value: !Ref InfraConfig
