@@ -3,7 +3,7 @@
 ## Variants
 ### install_wordpress.yml
 
-1. Php 7.4 is installed from the Amazon-managed `php-7-4-linux` ImageBuilder component
+1. Assumes php 7.4 is/will be pre-installed (eg from the Amazon-managed `php-7-4-linux` ImageBuilder component)
 2. The latest WordPress is installed from [the official WordPress site](http://wordpress.org/latest.tar.gz).
 3. File permissions and owners are set as per the [documentation](https://wordpress.org/support/article/hardening-wordpress/).
 4. A .htaccess file is added to the `wp-admin` root to enforce [Basic Auth](https://en.wikipedia.org/wiki/Basic_access_authentication) as an additional security layer. The username and password for this login are written to a file in the `ec2-user` home directory and set to be readable only by that user.
@@ -13,7 +13,7 @@
 
 Has the WordPress install code plus:
 
-1. The MySQL-compatible MariaDB is installed locally on the instance via the latest Amazon-managed `mariadb-linux` ImageBuild component. 
+1. Assumes the MySQL-compatible MariaDB is/will be installed locally on the instance (eg via the latest Amazon-managed `mariadb-linux` ImageBuilder component). 
 2. A strong root user password is generated and set (by default it ships with an empty password) and remote connections to the root account are disabled. 
 3. The db root password is written to a file in the `ec2-user` home directory and set to be readable only by that user. *NB: you may never need the root password if you only plan to use the database for WordPress on this instance.*
 4. A `wordpress` database is created with a matching `wordpress` database user who is granted limited permissions on that database only. 
