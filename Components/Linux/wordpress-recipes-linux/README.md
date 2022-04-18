@@ -40,7 +40,7 @@ Has the WordPress and Database install code plus:
 
 phpMyAdmin will be available at `<yourhost>/pma-ui`. 
 
-## User-facing instructions
+## Using the AMI
 
 To use an AMI produced by one of the pipelines in this project you need to create an EC2 instance from the AMI. You will need to configure the instance as you would any other web facing instance. Ensure it has a suitable instance role (eg `AmazonSSMRoleForInstancesQuickSetup` if you want to be able to connect using Systems Manager) and security groups to enable necessary access. 
 
