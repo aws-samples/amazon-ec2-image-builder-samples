@@ -1,5 +1,5 @@
 name: InstallWordPressWithDbPma
-description: This document installs WordPress with Db on Amazon Linux 2
+description: This document installs WordPress with a Database and PhpMyAdmin on Amazon Linux 2
 schemaVersion: 1.0
 
 phases:
