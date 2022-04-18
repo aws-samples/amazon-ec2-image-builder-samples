@@ -1,5 +1,5 @@
 name: InstallWordPressWithDb
-description: this document installs Wordpress with Db on Amazon Linux
+description: This document installs WordPress with Db on Amazon Linux 2
 schemaVersion: 1.0
 
 phases:

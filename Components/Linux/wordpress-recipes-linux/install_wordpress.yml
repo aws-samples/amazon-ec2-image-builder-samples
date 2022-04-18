@@ -1,5 +1,5 @@
 name: InstallWordPress
-description: this document installs Wordpress on Amazon Linux
+description: This document installs WordPress on Amazon Linux 2
 schemaVersion: 1.0
 
 phases:
