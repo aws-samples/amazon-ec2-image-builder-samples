@@ -127,7 +127,7 @@ Resources:
     Type: Custom::GetSSOAdminRole
     DependsOn: GetSSORoleArnLambda
     Properties:
-      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn
+      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn
 
   ImageEncryptionKMSKey:
     Type: AWS::KMS::Key
@@ -154,7 +154,7 @@ Resources:
           - Sid: Enable IAM User Permissions
             Effect: Allow
             Principal:
-              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
             Action: kms:*
             Resource: '*'
           - Sid: Allow administration of the key
@@ -182,7 +182,7 @@ Resources:
             Principal:
               AWS: 
                 - !Sub "${EC2IBRole.Arn}"
-                - !Sub arn:aws:iam::${AppAccountId}:root
+                - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
             Action:
               - kms:DescribeKey
               - kms:Encrypt
@@ -195,7 +195,7 @@ Resources:
             Effect: Allow
             Principal:
               AWS:
-                - !Sub arn:aws:iam::${AppAccountId}:root
+                - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
             Action:
               - kms:CreateGrant
               - kms:ListGrants
@@ -282,7 +282,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-              - ec2.amazonaws.com
+              - !Sub "ec2.${AWS::URLSuffix}"
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:

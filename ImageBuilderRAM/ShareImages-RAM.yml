@@ -30,9 +30,9 @@ Resources:
       Name: !Ref ResourceShareName
       AllowExternalPrincipals: False
       PermissionArns:
-        - arn:aws:ram::aws:permission/AWSRAMDefaultPermissionImageBuilderImage
+        - arn:${AWS::Partition}:ram::aws:permission/AWSRAMDefaultPermissionImageBuilderImage
       Principals:
-        - !Sub arn:aws:organizations::${ManagementAccountId}:organization/${OrgId}
+        - !Sub arn:${AWS::Partition}:organizations::${ManagementAccountId}:organization/${OrgId}
 
 
   #### LambdaIAM ROLE
@@ -139,11 +139,11 @@ Resources:
       Action: 'lambda:InvokeFunction'
       FunctionName: !Ref ShareImageLambda
       Principal: sns.amazonaws.com
-      SourceArn: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName} 
+      SourceArn: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName} 
 
   LambdaSNSSubscription:
     Type: AWS::SNS::Subscription
     Properties:
       Endpoint: !GetAtt ShareImageLambda.Arn
       Protocol: lambda
-      TopicArn: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName}
+      TopicArn: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName}
