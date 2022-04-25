@@ -16,8 +16,10 @@ The following settings can be configured before running CDK deployment. Those se
 
 | Configuration Key Name             | Type | Description                                                                                                                                                                                   | Default Value                          | Required |
 | ---------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------- |
-| buildCompletionNotificationEmails  | List | A list of email addresses that will get notification when build is completed                                                                                                                  | []                                     | No       |
+| buildCompletionNotificationEmails  | List | A list of email addresses that will get notification when build is completed                                                                                                                  | [AlejandroRosalez@example.com]                                     | No       |
 | ImageBuilderPipelineConfigurations | List | A list of configuration settings to define the EC2 Image Building pipelines. Each entry in the list defines an Image Building Pipeline (See next Section for more information about this key) | Default settings for a sample pipeline | Yes      |
+
+* notice `AlejandroRosalez@example.com` is a fictious email address for demo purpose, you can replace it with your own email addresses.
 
 ## Image Builder Pipeline Configuration
 
