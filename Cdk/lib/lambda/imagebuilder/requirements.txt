@@ -1,0 +1,3 @@
+arnparse
+boto3
+botocore
