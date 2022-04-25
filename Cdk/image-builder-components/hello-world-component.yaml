@@ -1,0 +1,32 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: AWS EC2 ImageBuilder Hello world
+description: This component only echos helloword, provide a place holder for user to replace it with other AWS Components
+schemaVersion: 1.0
+
+constants:
+  - fail:
+      type: string
+      value: "1"
+
+phases:
+  - name: build
+    steps:
+      - name: EchoHelloWorld
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              echo "hello world" > ~/helloworld.txt
+
+      - name: Assert
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              if [[ -f ~/helloworld.txt ]]; then
+                echo 'Hello world echo file created'
+              else
+                echo 'Hello world echo file not created. Failing validation.'
+                exit {{ fail }}
+              fi
