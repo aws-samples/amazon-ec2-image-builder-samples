@@ -1,6 +1,6 @@
 # AWS EC2 Image Builder CDK Example
 
-This repository contains sample code that demonstrates how to manage an Amazon EC2 Image Builder by leveraging the capability of [AWS Cloud Development Kit](https://aws.amazon.com/cdk/).
+This folder contains sample code that demonstrates how to create Amazon EC2 Image Builder resources by leveraging the capability of the [AWS Cloud Development Kit](https://aws.amazon.com/cdk/).
 
 ## Requirements
 
@@ -8,7 +8,7 @@ This repository contains sample code that demonstrates how to manage an Amazon E
 - Npm 6.14.0 or above
 - Docker 20.0.0 or above
 - CDK 2.0.0 or above
-- AWS account need to be bootstrapped by following the steps from https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html
+- AWS account need to be bootstrapped by following the steps in the [CDK Bootstrapping](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html) guide.
 
 ## System Configuration
 

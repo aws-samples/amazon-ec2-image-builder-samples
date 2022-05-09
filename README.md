@@ -10,7 +10,7 @@ The ```CloudFormation``` folder contains sample EC2 Image Builder CloudFormation
 
 ### CDK
 
-The ```CDK``` folder contains sample EC2 Image Builder Cloud Development Kit. These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS accounts using Cloud Development Kit. See more in [README](./CDK/README.md)
+The ```CDK``` folder contains sample EC2 Image Builder Cloud Development Kit. These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS accounts using Cloud Development Kit.
 
 ### Components
 
