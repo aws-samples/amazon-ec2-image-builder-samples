@@ -51,7 +51,7 @@ Resources:
     Properties: 
       RepositoryName: !Ref TargetECRRepository
       ImageScanningConfiguration:
-        scanOnPush: "true"
+        ScanOnPush: true
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
