@@ -49,7 +49,3 @@ To use an AMI produced by one of the pipelines in this project you need to creat
 Note also that while the latest version of WordPress is installed when the AMI is built, you will need to keep WordPress and its plugins and themes up-to-date once you spin up an instance from it. 
 
 If you spin up new WordPress instances regularly that you schedule the EC2 Image Builder pipeline to regularly rebuild the AMI so it does not drift too far from the most recent version.
-
-## License 
-
-See [LICENSE.txt](LICENSE.txt)
