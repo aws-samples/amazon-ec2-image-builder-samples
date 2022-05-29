@@ -1,0 +1,124 @@
+name: InstallWordPressWithDbPma
+description: This document installs WordPress with a Database and PhpMyAdmin on Amazon Linux 2
+schemaVersion: 1.0
+
+phases:
+    - name: build
+      steps:
+        - name: InstallWordPressPrerequisites
+          action: ExecuteBash
+          inputs:
+            commands:
+                - sudo yum install php-cli php-gd php-imagick php-intl php-pdo php-mbstring php-fpm php-json php-xml php-mysqlnd -y
+                - sudo yum install httpd mariadb-server -y
+                - echo "Adding ec2-user to apache group"
+                - sudo usermod -a -G apache ec2-user
+                - echo "enabling httpd and mariadb to start on boot"
+                - sudo systemctl enable httpd
+                - sudo systemctl enable mariadb    
+        - name: InstallWordPress
+          action: ExecuteBash
+          inputs:
+            commands:
+                - echo "Downloading & installing wordpress"
+                - sudo wget http://wordpress.org/latest.tar.gz
+                - sudo tar -xzf latest.tar.gz
+                - sudo mv wordpress/* /var/www/html
+                - sudo rm -f wordpress
+                - echo "Setting permissions as per https://wordpress.org/support/article/hardening-wordpress/"
+                - sudo chown -R apache:apache /var/www/html
+                - sudo chmod 2755 /var/www/html && find /var/www/html -type d -exec chmod 2755 {} \;
+                - sudo find /var/www -type f -exec chmod 0644 {} \;
+                - sudo rm -f latest.tar.gz
+                - WP_ADMIN_USER_PASS=`sudo openssl rand -base64 5`
+                - sudo htpasswd -cdb /var/www/.htpasswd wp_admin $WP_ADMIN_USER_PASS
+                - sudo chown ec2-user:ec2-user /var/www/.htpasswd
+                - |
+                  sudo echo "User: wp_admin
+                  Password: ${WP_ADMIN_USER_PASS}" > /home/ec2-user/wp-admin-basic-auth-creds
+                - sudo chown ec2-user:ec2-user /home/ec2-user/wp-admin-basic-auth-creds
+                - sudo chmod 400 /home/ec2-user/wp-admin-basic-auth-creds 
+                - |
+                  sudo echo "AuthType Basic
+                  AuthName \"Restricted Access\"
+                  AuthUserFile /var/www/.htpasswd
+                  Require user wp_admin" > /var/www/html/wp-admin/.htaccess
+                - |
+                  sudo echo "<Directory \"/var/www/html\">
+                    AllowOverride AuthConfig
+                  </Directory>
+                  <Directory \"/var/www/html/wp-admin\">
+                    AllowOverride AuthConfig
+                  </Directory>" > /etc/httpd/conf.d/wordpress.conf
+        - name: ConfiguringDatabaseAndWpConfig
+          action: ExecuteBash
+          inputs:
+            commands:                
+                - echo "Creating secrets"
+                - MYSQL_ROOT_PASS=`sudo openssl rand -base64 18`
+                - WORDPRESS_USER_PASS=`sudo openssl rand -base64 14`
+                - KEYS_AND_SALTS=`curl https://api.wordpress.org/secret-key/1.1/salt/`
+                - echo "Configuring mysql"
+                - |
+                  sudo mysql -u root << EOFMYSQLSECURE
+                  UPDATE mysql.user SET PASSWORD=PASSWORD("${MYSQL_ROOT_PASS}") WHERE USER='root';
+                  DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+                  DELETE FROM mysql.user WHERE User='';
+                  DELETE FROM mysql.db WHERE Db='test' OR Db='test_%';
+                  CREATE DATABASE wordpress;
+                  CREATE USER 'wordpress'@localhost IDENTIFIED BY "${WORDPRESS_USER_PASS}";
+                  GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, DROP ON wordpress.* TO 'wordpress'@localhost;
+                  FLUSH PRIVILEGES;
+                  EOFMYSQLSECURE
+                - echo "Writing master password to file in ec2-user home dir"
+                - sudo echo ${MYSQL_ROOT_PASS} > /home/ec2-user/mrp
+                - sudo chown ec2-user:ec2-user /home/ec2-user/mrp
+                - sudo chmod 400 /home/ec2-user/mrp 
+                - echo "Writing wp-config.php and cleaning up"
+                - |
+                  sudo echo "<?php
+                  define('DB_NAME', 'wordpress');
+                  define('DB_USER', 'wordpress');
+                  define('DB_PASSWORD', '${WORDPRESS_USER_PASS}');
+                  define('DB_HOST', 'localhost');
+                  define('DB_CHARSET', 'utf8');
+                  define('DB_COLLATE', '');
+                  ${KEYS_AND_SALTS}
+                  \$table_prefix = 'wp_core_';
+                  define('FS_METHOD', 'direct');
+                  define('WP_DEBUG', false );
+                  if ( ! defined('ABSPATH') ) {
+                    define('ABSPATH', __DIR__ . '/');
+                  }
+                  require_once ABSPATH . 'wp-settings.php';" > /var/www/html/wp-config.php
+                - sudo rm -f /var/www/html/wp-config-sample.php
+                - sudo chmod 440 /var/www/html/wp-config.php
+                - sudo chown ec2-user:apache /var/www/html/wp-config.php
+        - name: InstallPhpMyAdmin
+          action: ExecuteBash
+          inputs:
+            commands:                
+                - echo "Installing PhpMyAdmin"
+                - sudo wget https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.tar.gz
+                - sudo mkdir /var/www/html/pma-ui && tar -xzf phpMyAdmin-latest-all-languages.tar.gz -C /var/www/html/pma-ui --strip-components 1
+                - sudo rm -f phpMyAdmin-latest-all-languages.tar.gz
+                - sudo chown -R ec2-user:ec2-user /var/www/html/pma-ui
+                - sudo chmod 2755 /var/www/html/pma-ui && find /var/www/html/pma-ui -type d -exec chmod 2755 {} \;
+                - sudo find /var/www/html/pma-ui -type f -exec chmod 0644 {} \;
+                - PMA_USER_PASS=`sudo openssl rand -base64 5`
+                - sudo htpasswd -db /var/www/.htpasswd pma $PMA_USER_PASS
+                - sudo chown ec2-user:ec2-user /var/www/.htpasswd
+                - |
+                  sudo echo "User: pma
+                  Password: ${PMA_USER_PASS}" > /home/ec2-user/pma-basic-auth-creds
+                - sudo chown ec2-user:ec2-user /home/ec2-user/pma-basic-auth-creds
+                - sudo chmod 400 /home/ec2-user/pma-basic-auth-creds 
+                - |
+                  sudo echo "AuthType Basic
+                  AuthName \"Restricted Access\"
+                  AuthUserFile /var/www/.htpasswd
+                  Require user pma" > /var/www/html/pma-ui/.htaccess
+                - |
+                  sudo echo "<Directory \"/var/www/html/pma-ui\">
+                    AllowOverride AuthConfig
+                  </Directory>" > /etc/httpd/conf.d/pma.conf
