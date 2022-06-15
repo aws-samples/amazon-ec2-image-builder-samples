@@ -24,7 +24,7 @@ Resources:
           Properties:
             Topic: !Ref ImageBuilderSNSTopic
       Policies:
-          - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          # - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - Version: '2012-10-17'
             Statement:
               - Effect: Allow
@@ -32,6 +32,9 @@ Resources:
                   - ssm:PutParameter
                   - ssm:AddTagsToResource
                   - ssm:GetParameters
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
                 Resource: '*'
 
 Outputs:
