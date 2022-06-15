@@ -5,7 +5,6 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# ssm_client = boto3.client('ssm')
 ssm_parameter_name = "/ec2-imagebuilder/latest"
 session = boto3.session.Session()
 
