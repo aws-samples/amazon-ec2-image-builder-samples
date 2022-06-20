@@ -12,7 +12,7 @@ Resources:
     Type: "AWS::Serverless::Function"
     Properties:
       Handler: image-builder-lambda-update-ssm.lambda_handler
-      Runtime: python3.7
+      Runtime: python3.8
       CodeUri: .
       Description: Update SSM Parameter with the latest AMI
       MemorySize: 256
@@ -24,7 +24,6 @@ Resources:
           Properties:
             Topic: !Ref ImageBuilderSNSTopic
       Policies:
-          - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
           - Version: '2012-10-17'
             Statement:
               - Effect: Allow
@@ -32,7 +31,7 @@ Resources:
                   - ssm:PutParameter
                   - ssm:AddTagsToResource
                   - ssm:GetParameters
-                Resource: '*'
+                Resource: !Sub arn:${Partition}:ssm:${Region}:${Account}:parameter/*
 
 Outputs:
   LambdaArn:
@@ -46,6 +45,3 @@ Outputs:
     Value: !Ref ImageBuilderSNSTopic
     Export:
       Name: image-builder-lambda-sns-arn
-
-
-
