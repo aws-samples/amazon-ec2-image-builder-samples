@@ -4,21 +4,21 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Amazon Linux 2 container image with Docker 
-  and publishes the image to the specified Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is scheduled to run a 
-  build at 9:00AM Coordinated Universal Time (UTC) on the first day of every month. 
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Amazon Linux 2 container image with Docker
+  and publishes the image to the specified Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is scheduled to run a
+  build at 9:00AM Coordinated Universal Time (UTC) on the first day of every month.
 
 Parameters:
   CustomSubnetId:
     Type: String
     Default: ""
     Description: If you do not have a default VPC, or want to use a different VPC, specify the ID of a subnet in which to place the instance used to customize your EC2 container image. If not specified, a subnet from your default VPC will be used.
-  
+
   CustomSecurityGroupId:
     Type: CommaDelimitedList
     Default: ""
     Description: Required if you specified a custom subnet ID. Comma-delimited list of one or more IDs of security groups belonging to the VPC to associate with the instance used to customize your EC2 container image.
-  
+
   BuildInstanceType:
     Type: CommaDelimitedList
     Default: "t2.micro"
@@ -41,14 +41,14 @@ Resources:
     # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
     # DeletionPolicy: Retain
-  
+
   # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
-  # When deleting this stack, make sure to empty the repository first. Otherwise, you 
+  # When deleting this stack, make sure to empty the repository first. Otherwise, you
   # will experience a status of "DELETE_FAILED" in CloudFormation.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ecr-repository.html
-  ECRRepository: 
+  ECRRepository:
     Type: AWS::ECR::Repository
-    Properties: 
+    Properties:
       RepositoryName: !Ref TargetECRRepository
       ImageScanningConfiguration:
         ScanOnPush: true
@@ -72,7 +72,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: "2012-10-17"
       Path: /executionServiceEC2Role/
 
@@ -107,7 +107,7 @@ Resources:
       Path: /executionServiceEC2Role/
       Roles:
         - Ref: InstanceRole
-  
+
   # Specifies the infrastructure within which to build and test your image.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
   Infrastructure:
@@ -133,9 +133,9 @@ Resources:
       SecurityGroupIds:
         - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
 
-  # Create a sample "Hello World" component doc that demonstrates defining the build, validation, 
-  # and test phases for an image build lifecycle. The component includes a validation step which will run 
-  # after the install but before the image capture. Also included, is a test step which runs after the image 
+  # Create a sample "Hello World" component doc that demonstrates defining the build, validation,
+  # and test phases for an image build lifecycle. The component includes a validation step which will run
+  # after the install but before the image capture. Also included, is a test step which runs after the image
   # is captured (EC2 Image Builder launches a new instance from the image and runs the test phase).
   Component:
     Type: AWS::ImageBuilder::Component
@@ -145,7 +145,7 @@ Resources:
       Version: 1.0.0
       Description: 'This is a sample component that demonstrates defining the build, validation, and test phases for an image build lifecycle'
       ChangeDescription: 'Initial Version'
-      Data: | 
+      Data: |
         name: Hello World
         description: This is hello world component doc for Linux.
         schemaVersion: 1.0
@@ -181,7 +181,7 @@ Resources:
       Name: 'AmazonLinux2-Container-Recipe'
       Version: 1.0.0
       ParentImage: amazonlinux:latest
-      # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom 
+      # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom
       # via the "PlatformOverride" property.
       PlatformOverride: Linux # Linux | Windows
       ContainerType: DOCKER
@@ -199,7 +199,7 @@ Resources:
         {{{ imagebuilder:components }}}
       WorkingDirectory: "/tmp"
 
-# Allows you to specify the name and description of your output container image and settings for tagging and sharing 
+# Allows you to specify the name and description of your output container image and settings for tagging and sharing
 # to a target ECR repository in a specific region.
 # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html
   Distribution:
@@ -209,11 +209,11 @@ Resources:
       Description: 'This distribution configuration will deploy our container image to the desired target ECR repository in the current region'
       Distributions:
         - Region: !Ref 'AWS::Region'
-          ContainerDistributionConfiguration: 
-            TargetRepository: 
+          ContainerDistributionConfiguration:
+            TargetRepository:
               Service: ECR
               RepositoryName: !Ref TargetECRRepository
-            # By default, if no container tags are specified, the "Image tags" value in ECR will reflect the image build version (e.g. 1.0.0-1), 
+            # By default, if no container tags are specified, the "Image tags" value in ECR will reflect the image build version (e.g. 1.0.0-1),
             # which can be found by navigating to EC2 ImageBuilder in the AWS Management Console.
             ContainerTags:
               - 'sample-tag'
@@ -227,7 +227,7 @@ Resources:
   #     Name: 'AmazonLinux2-Container-Pipeline'
   #     Description: 'Creates a image build pipeline that deploys a sample AmazonLinux2 container image to current region at 9AM UTC on the 1st day of every month'
   #     Status: ENABLED
-  #     ContainerRecipeArn: !Ref Recipe 
+  #     ContainerRecipeArn: !Ref Recipe
   #     InfrastructureConfigurationArn: !Ref Infrastructure
   #     DistributionConfigurationArn: !Ref Distribution
   #     ImageTestsConfiguration:
@@ -243,7 +243,7 @@ Resources:
   IBImage:
     Type: AWS::ImageBuilder::Image
     Properties:
-      ContainerRecipeArn: !Ref Recipe 
+      ContainerRecipeArn: !Ref Recipe
       InfrastructureConfigurationArn: !Ref Infrastructure
       DistributionConfigurationArn: !Ref Distribution
       ImageTestsConfiguration:

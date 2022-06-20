@@ -85,7 +85,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: '2012-10-17'
       Path: /executionServiceEC2Role/
 
@@ -460,7 +460,7 @@ Resources:
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
 
   # The CloudWatch Log Group for the Lambda Function.
-  RecipeLogGroup:
+  LambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${LowerCaseLambda}'
@@ -476,7 +476,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                - lambda.amazonaws.com
+                - !Sub 'lambda.${AWS::URLSuffix}'
             Action:
               - sts:AssumeRole
       Policies:
@@ -495,7 +495,7 @@ Resources:
   LowerCaseImageName:
     Type: Custom::Lowercase
     DependsOn:
-      - RecipeLogGroup
+      - LambdaLogGroup
     Properties:
       ServiceToken: !GetAtt LowerCaseLambda.Arn
       InputString: !Ref ResourceName

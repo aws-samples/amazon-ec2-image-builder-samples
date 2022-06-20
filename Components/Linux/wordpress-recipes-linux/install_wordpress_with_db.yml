@@ -15,7 +15,7 @@ phases:
                 - sudo usermod -a -G apache ec2-user
                 - echo "enabling httpd and mariadb to start on boot"
                 - sudo systemctl enable httpd
-                - sudo systemctl enable mariadb    
+                - sudo systemctl enable mariadb
         - name: InstallWordPress
           action: ExecuteBash
           inputs:
@@ -37,7 +37,7 @@ phases:
                   sudo echo "User: wp_admin
                   Password: ${WP_ADMIN_USER_PASS}" > /home/ec2-user/wp-admin-basic-auth-creds
                 - sudo chown ec2-user:ec2-user /home/ec2-user/wp-admin-basic-auth-creds
-                - sudo chmod 400 /home/ec2-user/wp-admin-basic-auth-creds 
+                - sudo chmod 400 /home/ec2-user/wp-admin-basic-auth-creds
                 - |
                   sudo echo "AuthType Basic
                   AuthName \"Restricted Access\"
@@ -53,7 +53,7 @@ phases:
         - name: ConfiguringDatabaseAndWpConfig
           action: ExecuteBash
           inputs:
-            commands:                
+            commands:
                 - echo "Creating secrets"
                 - MYSQL_ROOT_PASS=`sudo openssl rand -base64 18`
                 - WORDPRESS_USER_PASS=`sudo openssl rand -base64 14`
@@ -73,7 +73,7 @@ phases:
                 - echo "Writing master password to file in ec2-user home dir"
                 - sudo echo ${MYSQL_ROOT_PASS} > /home/ec2-user/mrp
                 - sudo chown ec2-user:ec2-user /home/ec2-user/mrp
-                - sudo chmod 400 /home/ec2-user/mrp 
+                - sudo chmod 400 /home/ec2-user/mrp
                 - echo "Writing wp-config.php and cleaning up"
                 - |
                   sudo echo "<?php

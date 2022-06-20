@@ -82,7 +82,7 @@ export class AWSImageBuilderConstruct extends Construct {
 
     //creates a role for Imagebuilder to build EC2 image
     const imageBuilderRole = new Role(this, `ImageBuilderRole${props.name}`, {
-      assumedBy: new ServicePrincipal("ec2.amazonaws.com"),
+      assumedBy: new ServicePrincipal(`ec2.${Aws.URL_SUFFIX}`),
       path: "/executionServiceEC2Role/",
     });
 

@@ -31,7 +31,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: '2012-10-17'
       Path: /executionServiceEC2Role/
 

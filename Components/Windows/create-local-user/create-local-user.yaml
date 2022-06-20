@@ -38,7 +38,7 @@ phases:
             - |
               $ErrorActionPreference = 'Stop'
               $ProgressPreference = 'SilentlyContinue'
-              
+
               Write-Host "Fetching password from Secrets Manager..."
               $secret = Get-SECSecretValue -SecretId "{{ PasswordSecret }}"
               $secretValue = ConvertFrom-JSON -InputObject $secret.SecretString
@@ -48,7 +48,7 @@ phases:
               $password = ConvertTo-SecureString -String $secretValue.password -AsPlaintext -Force
               New-LocalUser "{{ Username }}" -Password $password -PasswordNeverExpires -FullName "{{ FullName }}" -Description "{{ Description }}"
               Write-Host "Done."
-              
+
               Write-Host "Adding user to RDP access group..."
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "{{ Username }}"
               Write-Host "Done."
@@ -61,7 +61,7 @@ phases:
           commands:
             - |
               Write-Host "Validating user creation"
-              
+
               try {
                 $localUser = Get-LocalUser -Name "{{ Username }}"
               }
@@ -70,12 +70,12 @@ phases:
                 exit 1
               }
               Write-Host "The local user account was created"
-              
+
               if ($localUser.FullName -ne "{{ FullName }}") {
                 Write-Host "The full name is not matching the specification"
                 exit 1
               }
-              
+
               if ($localUser.Description -ne "{{ Description }}") {
                 Write-Host "The Description is not matching the specification"
                 exit 1
