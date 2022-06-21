@@ -71,6 +71,16 @@ Resources:
     # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
     # DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
 
   # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
   # When deleting this stack, make sure to empty the repository first. Otherwise, you
