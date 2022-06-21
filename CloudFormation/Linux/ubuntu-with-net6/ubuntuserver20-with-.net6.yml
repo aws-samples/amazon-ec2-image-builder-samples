@@ -38,6 +38,8 @@ Resources:
         IgnorePublicAcls: true
         BlockPublicPolicy: true
         RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.

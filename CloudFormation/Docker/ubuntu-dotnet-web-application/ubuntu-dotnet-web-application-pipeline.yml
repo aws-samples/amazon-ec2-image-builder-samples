@@ -81,6 +81,8 @@ Resources:
         IgnorePublicAcls: true
         BlockPublicPolicy: true
         RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
   # When deleting this stack, make sure to empty the repository first. Otherwise, you
