@@ -31,7 +31,7 @@ Resources:
                   - ssm:PutParameter
                   - ssm:AddTagsToResource
                   - ssm:GetParameters
-                Resource: !Sub arn:${Partition}:ssm:${Region}:${Account}:parameter/*
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*
 
 Outputs:
   LambdaArn:
