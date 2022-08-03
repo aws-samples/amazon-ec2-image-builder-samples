@@ -4,20 +4,19 @@ Parameters:
     Description: Id of your Organization in the following format o-xxxxxxx
     Type: String
     AllowedPattern: ^o-[a-z0-9]{10,32}$
-    ConstraintDescription: organization id should start with "o-" followed by 10-32 alphanumeric characters
-    Default: o-abcde12345
+    ConstraintDescription: organization id should start with 'o-' followed by 10-32 alphanumeric characters
+
 
   ManagementAccountId:
     Description: Management Account ID
     Type: String
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the Management Account
-    Default: 123456789100
   
   ResourceShareName:
     Type: String
     Default: ImageShare
-
+    
   SNSTopicName:
     Description: ImageBuilder SNS Topic Name
     Type: String
@@ -30,63 +29,63 @@ Resources:
       Name: !Ref ResourceShareName
       AllowExternalPrincipals: False
       PermissionArns:
-        - arn:${AWS::Partition}:ram::aws:permission/AWSRAMDefaultPermissionImageBuilderImage
+        - !Sub 'arn:${AWS::Partition}:ram::aws:permission/AWSRAMDefaultPermissionImageBuilderImage'
       Principals:
-        - !Sub arn:${AWS::Partition}:organizations::${ManagementAccountId}:organization/${OrgId}
+        - !Sub 'arn:${AWS::Partition}:organizations::${ManagementAccountId}:organization/${OrgId}'
 
 
   #### LambdaIAM ROLE
   LambdaSharingIAMRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: "IAM role for RAM Image sharing Lambda"
+      Description: IAM role for RAM Image sharing Lambda
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
-          - Effect: "Allow"
+          - Effect: Allow
             Principal:
               Service:
-                - "lambda.amazonaws.com"
+                - !Sub 'lambda.${AWS::URLSuffix}'
             Action:
-              - "sts:AssumeRole"
+              - sts:AssumeRole
       ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies: 
-        - PolicyName: "LambdaResourceShareListPolicy"
+        - PolicyName: 'LambdaResourceShareListPolicy'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - ram:ListResources
                   - ram:GetResourceShares
-                Resource: "*"
-        - PolicyName: "LambdaResourceShareUpdatePolicy"
+                Resource: '*'
+        - PolicyName: 'LambdaResourceShareUpdatePolicy'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - ram:AssociateResourceShare
                   - ram:UpdateResourceShare
                 Resource: !GetAtt ImagesResourceShare.Arn
-        - PolicyName: "LambdaImageBuilderListPolicy"
+        - PolicyName: 'LambdaImageBuilderListPolicy'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - imagebuilder:ListImages 
                 Resource: '*'
-        - PolicyName: "LambdaImageBuilderUpdatePolicy"
+        - PolicyName: 'LambdaImageBuilderUpdatePolicy'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - imagebuilder:PutImagePolicy
                   - imagebuilder:GetImage
-                Resource: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/amznlinux2-imagerecipe-shared/*"
+                Resource: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/amznlinux2-imagerecipe-shared/*'
       Path: /
 
   ShareImageLambda:
@@ -106,31 +105,31 @@ Resources:
           logger.setLevel(logging.INFO)
 
           ram = boto3.client('ram')
-          RESOURCE_SHARE_NAME = "${ResourceShareName}"
+          RESOURCE_SHARE_NAME = '${ResourceShareName}'
           def lambda_handler(event, context):
-              logger.info(f"Event Raw : {event}")
+              logger.info(f'Event Raw : {event}')
               eventJson = json.loads(event['Records'][0]['Sns']['Message'])
-              logger.info(f"Message JSON: {eventJson}")
+              logger.info(f'Message JSON: {eventJson}')
               try:
-                  logger.info(f"Retreiving ResourceShare with name : {RESOURCE_SHARE_NAME}")
+                  logger.info(f'Retreiving ResourceShare with name : {RESOURCE_SHARE_NAME}')
                   shares = ram.get_resource_shares(resourceOwner='SELF', name=RESOURCE_SHARE_NAME)
-                  logger.info(f"Retreiving ResourceShare with name : {RESOURCE_SHARE_NAME} has been successful")
+                  logger.info(f'Retreiving ResourceShare with name : {RESOURCE_SHARE_NAME} has been successful')
               except botocore.exceptions.ClientError as error:
-                  logger.error(f"Error unable to find ResourceShare with name: {RESOURCE_SHARE_NAME},\
-                  please check that the resource share has been created and the resource share name is correct")
+                  logger.error(f'Error unable to find ResourceShare with name: {RESOURCE_SHARE_NAME},\
+                  please check that the resource share has been created and the resource share name is correct')
                   raise error
               try:
                   resourceShareArn = shares['resourceShares'][0]['resourceShareArn']
               except:
-                  logger.error("Unable to find ResourceShareArn please check that the resource share has been created")
+                  logger.error('Unable to find ResourceShareArn please check that the resource share has been created')
               if eventJson['state']['status'] == 'AVAILABLE':
                   resourceArn = eventJson['arn']
                   try:
-                      logger.info(f"Sharing Image {resourceArn}")
+                      logger.info(f'Sharing Image {resourceArn}')
                       associatedResources = ram.associate_resource_share(resourceShareArn = resourceShareArn, resourceArns = [resourceArn] )
-                      logger.info(f"Image sharing of {resourceArn} has been successful")
+                      logger.info(f'Image sharing of {resourceArn} has been successful')
                   except botocore.exceptions.ClientError as error:
-                      logger.error(f"Error Unable to Share Image {resourceArn}")
+                      logger.error(f'Error Unable to Share Image {resourceArn}')
                       raise error
 
   SNSFunctionInvokePermission:
@@ -138,12 +137,12 @@ Resources:
     Properties:
       Action: 'lambda:InvokeFunction'
       FunctionName: !Ref ShareImageLambda
-      Principal: sns.amazonaws.com
-      SourceArn: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName} 
+      Principal: !Sub 'sns.${AWS::URLSuffix}'
+      SourceArn: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName}'
 
   LambdaSNSSubscription:
     Type: AWS::SNS::Subscription
     Properties:
       Endpoint: !GetAtt ShareImageLambda.Arn
       Protocol: lambda
-      TopicArn: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName}
+      TopicArn: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${SNSTopicName}'

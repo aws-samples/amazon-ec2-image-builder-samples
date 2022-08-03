@@ -9,12 +9,12 @@ Parameters:
   ImageBuilderSNSTopicName:
     Description: ImageBuilder SNS Topic Name
     Type: String
-    Default: "ImageBuilderNotificationsTomCat"
+    Default: ImageBuilderNotificationsTomCat
   
   NotificationEmail:
     Description: Email address to receieve notifications
     Type: String
-    Default: "email@example.com"
+
  
   SubnetId:
     Description: Subnet Id that will be used to spin up the build server needs access to public internet 
@@ -37,12 +37,12 @@ Parameters:
     Type: String
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the Shared Account
-    Default: 123456789100
+
   
   KMSKeyArn:
     Type: String
     Description: Key used for Encrypting Image in Shared Account
-    Default: arn:aws:kms:us-east-1:xxxxxxxx:key/xxxxxx-2b78-4731-bfbb-xxxxxxxxx
+
 
 Resources:
 
@@ -52,8 +52,8 @@ Resources:
         config: { 
           ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
           ignore_reasons: [ 
-            EIAMPolicyWildcardResource: "Requires full access to function",
-            EIAMPolicyActionWildcard: "Required in order to properly function"
+            EIAMPolicyWildcardResource: 'Requires full access to function',
+            EIAMPolicyActionWildcard: 'Required in order to properly function'
           ]
         }
       }
@@ -67,28 +67,28 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-              - !Sub "ec2.${AWS::URLSuffix}"
+              - !Sub 'ec2.${AWS::URLSuffix}'
             Action:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess"
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
       Policies:
-        - PolicyName: "EC2ImageBuilderPolicyForInspector"
+        - PolicyName: 'EC2ImageBuilderPolicyForInspector'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - ssm:SendCommand
                   - ec2:CreateTags
-                Resource: "*"
-        - PolicyName: "EC2ImageBuilderAppAccount-KMS-Decrypt"
+                Resource: '*'
+        - PolicyName: 'EC2ImageBuilderAppAccount-KMS-Decrypt'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - kms:Decrypt
                 Resource: !Ref KMSKeyArn
@@ -96,7 +96,7 @@ Resources:
   EC2InstanceProfile:  
     Type: AWS::IAM::InstanceProfile
     Properties: 
-      InstanceProfileName: !Sub "${EC2IBRole}Profile"
+      InstanceProfileName: !Sub '${EC2IBRole}Profile'
       Path: /
       Roles: 
         - !Ref EC2IBRole
@@ -104,7 +104,7 @@ Resources:
 #Create SNS Topic for Image Builder - SNS publish access for PipelineCloudFormationRole
 
   ImageBuilderSNSTopic:
-    Type: 'AWS::SNS::Topic'
+    Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
   
@@ -119,7 +119,7 @@ Resources:
         - Sid: default-policy-id
           Effect: Allow
           Principal: 
-            AWS : "*"
+            AWS : '*'
           Action: 
             - SNS:GetTopicAttributes
             - SNS:SetTopicAttributes
@@ -133,11 +133,11 @@ Resources:
           Resource: !Ref ImageBuilderSNSTopic
           Condition: 
             StringEquals:
-              AWS:SourceOwner: !Sub "${AWS::AccountId}"
+              AWS:SourceOwner: !Sub '${AWS::AccountId}'
         - Sid: allow-imagebuilder
           Effect: Allow
           Principal:
-            Service: imagebuilder.amazonaws.com
+            Service: !Sub imagebuilder.${AWS::URLSuffix}
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -155,18 +155,18 @@ Resources:
     Properties:
       Name: AmznLinux2-ImageRecipe-AppAccount
       Version: '1.0.0'
-      ParentImage: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x"
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x'
       Description: Image Recipe for AmznLinux2 Server Images
       Components:
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x"
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x'
       BlockDeviceMappings:
-        - DeviceName: "/dev/xvda"
+        - DeviceName: '/dev/xvda'
           Ebs:
             DeleteOnTermination: true
             Encrypted: true # turned on Encryption using default AWS managed key
-            VolumeType: "gp3"
+            VolumeType: 'gp3'
             VolumeSize: 30
-      WorkingDirectory: "/tmp"
+      WorkingDirectory: '/tmp'
       Tags:
         ParentOS: AmznLinux2
 

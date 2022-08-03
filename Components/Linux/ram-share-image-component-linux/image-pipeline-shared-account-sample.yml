@@ -9,12 +9,12 @@ Parameters:
   ImageBuilderSNSTopicName:
     Description: ImageBuilder SNS Topic Name
     Type: String
-    Default: "ImageBuilderNotifications"
+    Default: ImageBuilderNotifications
   
   NotificationEmail:
     Description: Email address to receieve notifications
     Type: String
-    Default: "email@example.com"
+
  
   SubnetId:
     Description: Subnet Id that will be used to spin up the build server needs access to public internet 
@@ -41,7 +41,7 @@ Parameters:
     Type: String
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the App Account
-    Default: 123456789100
+
 
   AdminPermissionSetName:
     Type: String
@@ -60,8 +60,10 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: [ lambda.amazonaws.com ]
-            Action: [ sts:AssumeRole ]
+              Service: 
+                - !Sub 'lambda.${AWS::URLSuffix}'
+            Action: 
+              - sts:AssumeRole
       ManagedPolicyArns: 
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
@@ -88,7 +90,7 @@ Resources:
           import traceback
           import boto3
           import cfnresponse
-          ADMIN_PERMISSION_SET = "${AdminPermissionSetName}"
+          ADMIN_PERMISSION_SET = '${AdminPermissionSetName}'
           iam = boto3.client('iam')
 
           def handler(event, context):
@@ -108,7 +110,7 @@ Resources:
 
                 for page in paginator.paginate():
                   for role in page['Roles']:
-                    if(f"AWSReservedSSO_{ADMIN_PERMISSION_SET}" in role['Arn']):
+                    if(f'AWSReservedSSO_{ADMIN_PERMISSION_SET}' in role['Arn']):
                       arn = role['Arn']
 
                 response_payload['SSOAdminArn'] = arn
@@ -136,8 +138,8 @@ Resources:
         config: { 
           ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
           ignore_reasons: [ 
-            EIAMPolicyWildcardResource: "Requires full access to function",
-            EIAMPolicyActionWildcard: "Required in order to properly function"
+            EIAMPolicyWildcardResource: 'Requires full access to function',
+            EIAMPolicyActionWildcard: 'Required in order to properly function'
           ]
         }
       }
@@ -154,7 +156,7 @@ Resources:
           - Sid: Enable IAM User Permissions
             Effect: Allow
             Principal:
-              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
             Action: kms:*
             Resource: '*'
           - Sid: Allow administration of the key
@@ -181,7 +183,7 @@ Resources:
             Effect: Allow
             Principal:
               AWS: 
-                - !Sub "${EC2IBRole.Arn}"
+                - !Sub '${EC2IBRole.Arn}'
                 - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
             Action:
               - kms:DescribeKey
@@ -215,7 +217,7 @@ Resources:
   
   
   ImageBuilderSNSTopic:
-    Type: 'AWS::SNS::Topic'
+    Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
   
@@ -224,13 +226,13 @@ Resources:
     DependsOn: ImageBuilderSNSTopic
     Properties:
       PolicyDocument:
-        Id: AllowBackups
+        Id: AllowImageBuilderAccess
         Version: '2012-10-17'
         Statement:
         - Sid: default-policy-id
           Effect: Allow
           Principal: 
-            AWS : "*"
+            AWS : '*'
           Action: 
             - SNS:GetTopicAttributes
             - SNS:SetTopicAttributes
@@ -244,11 +246,11 @@ Resources:
           Resource: !Ref ImageBuilderSNSTopic
           Condition: 
             StringEquals:
-              AWS:SourceOwner: !Sub "${AWS::AccountId}"
-        - Sid: allow-backup-id
+              AWS:SourceOwner: !Sub '${AWS::AccountId}'
+        - Sid: allow-imagebuilderservice-id
           Effect: Allow
           Principal:
-            Service: imagebuilder.amazonaws.com
+            Service: !Sub imagebuilder.${AWS::URLSuffix}
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -268,8 +270,8 @@ Resources:
         config: { 
           ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
           ignore_reasons: [ 
-            EIAMPolicyWildcardResource: "Requires full access to function",
-            EIAMPolicyActionWildcard: "Required in order to properly function"
+            EIAMPolicyWildcardResource: 'Requires full access to function',
+            EIAMPolicyActionWildcard: 'Required in order to properly function'
           ]
         }
       }
@@ -282,29 +284,29 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-              - !Sub "ec2.${AWS::URLSuffix}"
+              - !Sub 'ec2.${AWS::URLSuffix}'
             Action:
-              - 'sts:AssumeRole'
+              - sts:AssumeRole
       ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess"
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder"
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
       Policies:
-        - PolicyName: "EC2ImageBuilderPolicyForInspector"
+        - PolicyName: 'EC2ImageBuilderPolicyForInspector'
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
-              - Effect: "Allow"
+              - Effect: Allow
                 Action:
                   - ssm:SendCommand
                   - ec2:CreateTags
-                Resource: "*"
+                Resource: '*'
 
   
   EC2InstanceProfile:  
     Type: AWS::IAM::InstanceProfile
     Properties: 
-      InstanceProfileName: !Sub "${EC2IBRole}Profile"
+      InstanceProfileName: !Sub '${EC2IBRole}Profile'
       Path: /
       Roles: 
         - !Ref EC2IBRole
@@ -317,25 +319,23 @@ Resources:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
       Name: AmznLinux2-ImageRecipe-Shared
-      Version: 1.0.4
-      ParentImage: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${BaseImage}"
+      Version: '1.0.4'
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${BaseImage}'
       Description: Image Recipe for AmznLinux2 Server Images
       Components:
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/x.x.x"
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/python-3-linux/x.x.x"
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x"
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-high/x.x.x"
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-medium/x.x.x"
-        - ComponentArn: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-low/x.x.x"
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/python-3-linux/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-high/x.x.x'
       BlockDeviceMappings:
-        - DeviceName: "/dev/xvda"
+        - DeviceName: '/dev/xvda'
           Ebs:
             DeleteOnTermination: true
             Encrypted: true
             KmsKeyId: !Ref ImageEncryptionKMSKey
-            VolumeType: "gp3"
+            VolumeType: 'gp3'
             VolumeSize: 30
-      WorkingDirectory: "/tmp"
+      WorkingDirectory: '/opt'
       Tags:
         ParentOS: AmznLinux2
 
