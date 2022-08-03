@@ -1,0 +1,52 @@
+name: InstallWordPress
+description: This document installs WordPress on Amazon Linux 2
+schemaVersion: 1.0
+
+phases:
+    - name: build
+      steps:
+        - name: InstallWordPressPrerequisites
+          action: ExecuteBash
+          inputs:
+            commands:
+                - sudo yum install php-cli php-gd php-imagick php-intl php-pdo php-mbstring php-fpm php-json php-xml php-mysqlnd -y
+                - sudo yum install httpd mariadb-server -y
+                - echo "Adding ec2-user to apache group"
+                - sudo usermod -a -G apache ec2-user
+                - echo "enabling httpd and mariadb to start on boot"
+                - sudo systemctl enable httpd
+                - sudo systemctl enable mariadb
+        - name: InstallWordPress
+          action: ExecuteBash
+          inputs:
+            commands:
+                - echo "Downloading & installing wordpress"
+                - sudo wget http://wordpress.org/latest.tar.gz
+                - sudo tar -xzf latest.tar.gz
+                - sudo mv wordpress/* /var/www/html
+                - sudo rm -f wordpress
+                - echo "Setting permissions as per https://wordpress.org/support/article/hardening-wordpress/"
+                - sudo chown -R apache:apache /var/www/html
+                - sudo chmod 2755 /var/www/html && find /var/www/html -type d -exec chmod 2755 {} \;
+                - sudo find /var/www -type f -exec chmod 0644 {} \;
+                - sudo rm -f latest.tar.gz
+                - WP_ADMIN_USER_PASS=`sudo openssl rand -base64 5`
+                - sudo htpasswd -cdb /var/www/.htpasswd wp_admin $WP_ADMIN_USER_PASS
+                - sudo chown ec2-user:ec2-user /var/www/.htpasswd
+                - |
+                  sudo echo "User: wp_admin
+                  Password: ${WP_ADMIN_USER_PASS}" > /home/ec2-user/wp-admin-basic-auth-creds
+                - sudo chown ec2-user:ec2-user /home/ec2-user/wp-admin-basic-auth-creds
+                - sudo chmod 400 /home/ec2-user/wp-admin-basic-auth-creds
+                - |
+                  sudo echo "AuthType Basic
+                  AuthName \"Restricted Access\"
+                  AuthUserFile /var/www/.htpasswd
+                  Require user wp_admin" > /var/www/html/wp-admin/.htaccess
+                - |
+                  sudo echo "<Directory \"/var/www/html\">
+                    AllowOverride AuthConfig
+                  </Directory>
+                  <Directory \"/var/www/html/wp-admin\">
+                    AllowOverride AuthConfig
+                  </Directory>" > /etc/httpd/conf.d/wordpress.conf

@@ -11,6 +11,18 @@ Resources:
     # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
     # DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
@@ -31,7 +43,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: '2012-10-17'
       Path: /executionServiceEC2Role/
 
@@ -117,7 +129,7 @@ Resources:
             Fn::Sub: |
               <powershell>
               $ErrorActionPreference = 'Stop'
-              $source = 'https://amazon-ssm-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/windows_amd64/AmazonSSMAgentSetup.exe'
+              $source = 'https://amazon-ssm-${AWS::Region}.s3.${AWS::Region}.${AWS::URLSuffix}/latest/windows_amd64/AmazonSSMAgentSetup.exe'
               $installer = Join-Path -Path $env:TEMP -ChildPath 'AmazonSSMAgentSetup.exe'
               $webClient = New-Object -TypeName System.Net.WebClient
               $webClient.DownloadFile($source, $installer)

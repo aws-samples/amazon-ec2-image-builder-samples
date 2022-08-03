@@ -35,30 +35,30 @@ phases:
             - |
               $ErrorActionPreference = 'Stop'
               $ProgressPreference = 'SilentlyContinue'
-              
+
               $registryRoot = "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate"
               $registryRootAu = $registryRoot + "\AU"
 
               Write-Host "Setting Windows Update Server..."
               Set-ItemProperty -Path $registryRoot -Name "WUServer" -Type String -Value "{{ WUServer }}"
               Write-Host "done."
-              
+
               Write-Host "Setting Windows Update Status Server..."
               Set-ItemProperty -Path $registryRoot -Name "WUStatusServer" -Type String -Value "{{ WUStatusServer }}"
               Write-Host "done."
-              
+
               Write-Host "Enabling client-side targeting..."
               Set-ItemProperty -Path $registryRoot -Name "TargetGroupEnabled" -Type DWord -Value 1
               Write-Host "done."
-              
+
               Write-Host "Setting Windows Update TargetGroup..."
               Set-ItemProperty -Path $registryRoot -Name "TargetGroup" -Type String -Value "{{ TargetGroup }}"
               Write-Host "done."
-              
+
               Write-Host "Switching update source from Windows Update to WSUS Server..."
               Set-ItemProperty -Path $registryRootAu -Name "UseWUServer" -Type DWord -Value 1
               Write-Host "done."
-              
+
               Write-Host "Restarting Windows Update Service to activate settings..."
               Restart-Service -Name "wuauserv"
               Write-Host "done."
@@ -72,40 +72,40 @@ phases:
             - |
               $ErrorActionPreference = 'Stop'
               $ProgressPreference = 'SilentlyContinue'
- 
+
               $registryRoot = "HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate"
               $registryRootAu = $registryRoot + "\AU"
- 
+
               Write-Host "Validating WSUS configuration"
-              
+
               if ( (Get-ItemProperty -Path $registryRoot -Name WUServer).WUServer -ne "{{ WUServer }}" ) {
-              
+
                 Write-Host "Validation failed. Wrong WUServer"
                 exit 1
               }
-              
+
               if ( (Get-ItemProperty -Path $registryRoot -Name WUStatusServer).WUStatusServer -ne "{{ WUStatusServer }}" ) {
-              
+
                 Write-Host "Validation failed. Wrong WUStatusServer"
                 exit 1
               }
-              
+
               if ( (Get-ItemProperty -Path $registryRoot -Name TargetGroupEnabled).TargetGroupEnabled -ne 1 ) {
-              
+
                 Write-Host "Validation failed. Client-side targeting is not active"
                 exit 1
               }
-              
+
               if ( (Get-ItemProperty -Path $registryRoot -Name TargetGroup).TargetGroup -ne "{{ TargetGroup }}" ) {
-              
+
                 Write-Host "Validation failed. Wrong Target Group"
                 exit 1
               }
-              
+
               if ( (Get-ItemProperty -Path $registryRootAu -Name UseWUServer).UseWUServer -ne 1 ) {
-              
+
                 Write-Host "Validation failed. Automatic update is not configured to use WSUS as update source"
                 exit 1
               }
-              
+
               Write-Host "Validating WSUS was successful"

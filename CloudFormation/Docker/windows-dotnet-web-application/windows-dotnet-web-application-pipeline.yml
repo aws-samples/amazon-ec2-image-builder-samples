@@ -58,7 +58,7 @@ Parameters:
     Type: String
     Default: 'windows-webapp'
     Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
-  
+
   ApplicationPort:
     Type: String
     Default: '5000'
@@ -76,6 +76,18 @@ Resources:
     # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
     # DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
   # When deleting this stack, make sure to empty the repository first. Otherwise, you
@@ -107,7 +119,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: '2012-10-17'
       Path: /executionServiceEC2Role/
 
@@ -214,7 +226,7 @@ Resources:
                     - Expand-Archive -Force -Path 'c:\\windows-webapp.zip' -DestinationPath 'c:\\windows-webapp\\'
                     - $env:ASPNETCORE_URLS = '{{ ApplicationPort }}'
 
-              
+
 
   # Recipe which references the `ubuntu-18-x86-18-04` parent image. This also includes component references
   # to ensure the container is updated, and installed the .NET runtime and the custom component.

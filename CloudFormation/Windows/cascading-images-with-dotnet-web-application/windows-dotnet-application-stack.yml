@@ -63,6 +63,18 @@ Resources:
     # If you want to delete the stack, but keep the bucket, set the DelectionPolicy to Retain.
     # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html
     # DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
@@ -85,7 +97,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - ec2.amazonaws.com
+                - !Sub 'ec2.${AWS::URLSuffix}'
         Version: '2012-10-17'
       Path: /executionServiceEC2Role/
 
@@ -460,7 +472,7 @@ Resources:
               cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
 
   # The CloudWatch Log Group for the Lambda Function.
-  RecipeLogGroup:
+  LambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${LowerCaseLambda}'
@@ -476,7 +488,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                - lambda.amazonaws.com
+                - !Sub 'lambda.${AWS::URLSuffix}'
             Action:
               - sts:AssumeRole
       Policies:
@@ -495,7 +507,7 @@ Resources:
   LowerCaseImageName:
     Type: Custom::Lowercase
     DependsOn:
-      - RecipeLogGroup
+      - LambdaLogGroup
     Properties:
       ServiceToken: !GetAtt LowerCaseLambda.Arn
       InputString: !Ref ResourceName

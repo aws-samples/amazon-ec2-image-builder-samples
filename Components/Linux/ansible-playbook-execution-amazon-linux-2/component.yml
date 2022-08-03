@@ -10,7 +10,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-           - sudo amazon-linux-extras install -y ansible2
+            - sudo amazon-linux-extras install -y ansible2
       - name: DownloadPlaybook
         action: S3Download
         inputs:
