@@ -69,7 +69,7 @@ Resources:
               Service:
               - !Sub 'ec2.${AWS::URLSuffix}'
             Action:
-              - 'sts:AssumeRole'
+              - sts:AssumeRole
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess'
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
@@ -137,7 +137,7 @@ Resources:
         - Sid: allow-imagebuilder
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: !Sub 'imagebuilder.${AWS::URLSuffix}'
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:

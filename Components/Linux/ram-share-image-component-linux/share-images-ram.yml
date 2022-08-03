@@ -93,7 +93,7 @@ Resources:
     Properties:
       Description: Function that shares images created by ImageBuilder via RAM
       Runtime: python3.8
-      Role: !Sub ${LambdaSharingIAMRole.Arn}
+      Role: !Sub '${LambdaSharingIAMRole.Arn}'
       Handler: index.lambda_handler
       Code:
         ZipFile: !Sub |

@@ -65,7 +65,7 @@ Resources:
             Action: 
               - sts:AssumeRole
       ManagedPolicyArns: 
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
         - PolicyName: Lambda
           PolicyDocument:
@@ -129,7 +129,7 @@ Resources:
     Type: Custom::GetSSOAdminRole
     DependsOn: GetSSORoleArnLambda
     Properties:
-      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn
+      ServiceToken: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn'
 
   ImageEncryptionKMSKey:
     Type: AWS::KMS::Key
@@ -184,7 +184,7 @@ Resources:
             Principal:
               AWS: 
                 - !Sub '${EC2IBRole.Arn}'
-                - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
+                - !Sub 'arn:${AWS::Partition}:iam::${AppAccountId}:root'
             Action:
               - kms:DescribeKey
               - kms:Encrypt
@@ -197,7 +197,7 @@ Resources:
             Effect: Allow
             Principal:
               AWS:
-                - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
+                - !Sub 'arn:${AWS::Partition}:iam::${AppAccountId}:root'
             Action:
               - kms:CreateGrant
               - kms:ListGrants
@@ -250,7 +250,7 @@ Resources:
         - Sid: allow-imagebuilderservice-id
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: !Sub 'imagebuilder.${AWS::URLSuffix}'
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -367,7 +367,7 @@ Resources:
               BuildVersion: '{{ imagebuilder:buildVersion }}'
             LaunchPermissionConfiguration:
               UserIds: 
-                - !Sub ${AppAccountId}      
+                - !Sub '${AppAccountId}'     
 
   ImagePipeline:
     Type: AWS::ImageBuilder::ImagePipeline
