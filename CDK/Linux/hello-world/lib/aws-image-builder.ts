@@ -37,12 +37,11 @@ export interface AWSImageBuilderProps {
   name: string;
   parentImage: ParentImage;
   subnetId: string;
-  imageBuilderToolsBucket: IBucket;
   imageBuilderSG: ISecurityGroup;
   instanceProfileName: string;
   version: string;
   imageBuilderComponentList: ImageBuilderComponent[];
-  amiIdLocation: StringParameter;
+  amiIdSSMParameter: StringParameter;
   vpc: IVpc;
 }
 export const instanceTypes = ['t3.large', 't3.xlarge'];
@@ -51,8 +50,18 @@ export const HYPHEN = /-/gi;
 
 export const os_types = { LINUX: 'Linux' };
 export interface ImageBuilderComponent {
+  /**
+   * Name of the component
+   */
   name: string;
-  data: string;
+  /**
+   * ARN for AWS managed components, when specified, `data` is not required.
+   */
+  managedComponentArn?: string;
+  /**
+   * Content of the component definition yaml file. It will only be used when `managedComponentArn` is not specified
+   */
+  data?: string;
 }
 
 export interface SSMBuilderComponent {
@@ -64,7 +73,7 @@ export interface SSMBuilderComponent {
 
 export interface PipelineConfig {
   name: string;
-  dir: string;
+  components: string[];
   instanceProfileName: string;
   cfnImageRecipeName: string;
   version: string;
@@ -130,13 +139,15 @@ export class AWSImageBuilderConstruct extends Construct {
       }
     );
 
-    const componentArn = props.imageBuilderComponentList.map((componentList) => ({
-      componentArn: new CfnComponent(this, `${componentList.name}`, {
-        name: `${componentList.name}`,
-        platform: os_types.LINUX,
-        version: props.version,
-        data: `${componentList.data}`,
-      }).attrArn,
+    const componentArn = props.imageBuilderComponentList.map((component) => ({
+      componentArn:
+        component.managedComponentArn ??
+        new CfnComponent(this, `${component.name}`, {
+          name: `${component.name}`,
+          platform: os_types.LINUX,
+          version: props.version,
+          data: `${component.data}`,
+        }).attrArn,
     }));
 
     const cfnImageRecipe = new CfnImageRecipe(this, `cfnImageRecipe${props.name}`, {
@@ -161,7 +172,7 @@ export class AWSImageBuilderConstruct extends Construct {
       index: 'app.py',
       handler: 'lambda_handler',
       environment: {
-        IMAGE_SSM_NAME: props.amiIdLocation.parameterName,
+        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
       },
       timeout: Duration.seconds(45),
       initialPolicy: [
@@ -201,12 +212,12 @@ export class AWSImageBuilderConstruct extends Construct {
       index: 'app.py',
       handler: 'lambda_handler',
       environment: {
-        IMAGE_SSM_NAME: props.amiIdLocation.parameterName,
+        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
       },
     });
 
-    props.amiIdLocation.grantRead(amiIdRecorder);
-    props.amiIdLocation.grantWrite(amiIdRecorder);
+    props.amiIdSSMParameter.grantRead(amiIdRecorder);
+    props.amiIdSSMParameter.grantWrite(amiIdRecorder);
 
     notificationTopic.addSubscription(new LambdaSubscription(amiIdRecorder));
     this.subscribeEmails(notificationTopic);

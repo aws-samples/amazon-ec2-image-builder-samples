@@ -8,11 +8,13 @@ test('test stack can be built', () => {
     ImageBuilderPipelineConfigurations: [
       {
         name: 'sampleimg',
-        dir: './image-builder-components',
+        components: [
+          'arn:aws:imagebuilder:ap-southeast-2:aws:component/test-component/1.0.0/1',
+          'image-builder-components',
+        ],
         instanceProfileName: 'ImageBuilderInstanceProfile',
         cfnImageRecipeName: 'standalone-testrecipe02',
         version: '1.0.6',
-        ssmParameterName: 'ec2image_ami',
         parentImage: {
           'ap-southeast-2': { amiID: 'ami-0b7dcd6e6fd797935' },
           'ap-southeast-1': { amiID: 'ami-055d15d9cfddf7bd3' },

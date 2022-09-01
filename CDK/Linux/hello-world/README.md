@@ -16,7 +16,7 @@ The following settings can be configured before running CDK deployment. Those se
 
 | Configuration Key Name             | Type | Description                                                                                                                                                                                   | Default Value                          | Required |
 | ---------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------- |
-| buildCompletionNotificationEmails  | List | A list of email addresses that will get notification when build is completed                                                                                                                  | [AlejandroRosalez@example.com]                                     | No       |
+| buildCompletionNotificationEmails  | List | A list of email addresses that will get notification when build is completed                                                                                                                  | [AlejandroRosalez@example.com]         | No       |
 | ImageBuilderPipelineConfigurations | List | A list of configuration settings to define the EC2 Image Building pipelines. Each entry in the list defines an Image Building Pipeline (See next Section for more information about this key) | Default settings for a sample pipeline | Yes      |
 
 * notice `AlejandroRosalez@example.com` is a fictious email address for demo purpose, you can replace it with your own email addresses.
@@ -29,15 +29,14 @@ The following settings can be configured before running CDK deployment. Those se
 
 Below are the sub-keys available to each entry in `ImageBuilderPipelineConfigurations`
 
-| Configuration Key Name                                 | Type   | Description                 | Default Value                                           | Required |
-| ------------------------------------------------------ | ------ | --------------------------- | ------------------------------------------------------- | -------- |
-| ImageBuilderPipelineConfigurations/name                | string | Pipeline name               | sampleimg                                               | Yes      |
-| ImageBuilderPipelineConfigurations/dir                 | string | Directory contains the component spec | ./image-builder-components                    | Yes      |
-| ImageBuilderPipelineConfigurations/instanceProfileName | string | Instance profile name       | ImageBuilderInstanceProfile                             | Yes      |
-| ImageBuilderPipelineConfigurations/cfnImageRecipeName  | string | EC2 ImageBuilder recipe name| standalone-testrecipe001                                | Yes      |
-| ImageBuilderPipelineConfigurations/version             | string | Version of this pipeline    | 1.0.0                                                   | Yes      |
-| ImageBuilderPipelineConfigurations/parentImage         | Map    | Parent image AMI for each region | a key-value pair specify the base image for each region | Yes       |
-| ImageBuilderPipelineConfigurations/ssmParameterName    | string | SSM parameter store location to store the build AMI ID | ec2image*ami*<ImageBuilderPipelines/name>               | No       |
+| Configuration Key Name                                 | Type        | Description                                                                                                                                                                                     | Default Value                                           | Required |
+| ------------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------- |
+| ImageBuilderPipelineConfigurations/name                | string      | Pipeline name                                                                                                                                                                                   | sampleimg                                               | Yes      |
+| ImageBuilderPipelineConfigurations/components          | string list | A string array that each entry contains either the directory path that contains the component spec files, or the arn for an AWS Managed component, or a specific path to a component spec file. | ./example-component                                     | Yes      |
+| ImageBuilderPipelineConfigurations/instanceProfileName | string      | Instance profile name                                                                                                                                                                           | ImageBuilderInstanceProfile                             | Yes      |
+| ImageBuilderPipelineConfigurations/cfnImageRecipeName  | string      | EC2 ImageBuilder recipe name                                                                                                                                                                    | imagebuilder-example-recipe                             | Yes      |
+| ImageBuilderPipelineConfigurations/version             | string      | Version of this pipeline                                                                                                                                                                        | 1.0.0                                                   | Yes      |
+| ImageBuilderPipelineConfigurations/parentImage         | Map         | Parent image AMI for each region                                                                                                                                                                | a key-value pair specify the base image for each region | Yes      |
 
 ### Region specific Parent Image AMI IDs
 
@@ -52,7 +51,7 @@ The latest AMI IDs can be found from [Find a Linux AMI](https://docs.aws.amazon.
       ...
       {
           "name": "newimagebuilder",
-          "dir": "./image-builder",
+          "components": ["arn:aws:imagebuilder:ap-southeast-2:aws:component/san-sift-linux/1.0.0"],
           "instanceProfileName": "ImageBuilderInstanceProfile",
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.0",
@@ -74,12 +73,11 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
 "ImageBuilderPipelineConfigurations": [
      <!-- default pipeline configuration -->
       {
-          "name": "sampleimg",
-          "dir": "./image-builder-components",
+          "name": "imagebuilder-example",
+          "components": ["example-component"],
           "instanceProfileName": "ImageBuilderInstanceProfile",
           "cfnImageRecipeName": "standalone-testrecipe02",
           "version": "1.0.7",
-          "ssmParameterName":"ec2image_ami",
           "parentImage": {
               "ap-southeast-2": { "amiID": "ami-0b7dcd6e6fd797935" },
               "ap-southeast-1": { "amiID": "ami-055d15d9cfddf7bd3" },
@@ -92,7 +90,11 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
       <!-- new pipeline configuration -->
       {
           "name": "newimagebuilder",
-          "dir": "./image-builder",
+          "components": [
+                "arn:aws:imagebuilder:ap-southeast-2:aws:component/san-sift-linux/1.0.0",
+                "my-component-directory-path",
+                "my-other-component/my-component-spec.yaml"
+            ],
           "instanceProfileName": "ImageBuilderInstanceProfile",
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.0",
@@ -110,7 +112,14 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
 
 ### Managed Components for EC2 ImageBuilder
 
-The new component script must be provided before the new image building pipeline can be added. However, AWS provides large amount of managed components that can be easily used. They can be found from [List and view component details](https://docs.aws.amazon.com/imagebuilder/latest/userguide/component-details.html)
+The new component script must be provided before the new image building pipeline can be added. However, AWS provides large amount of managed components that can be easily used. They can be found from [List and view component details](https://docs.aws.amazon.com/imagebuilder/latest/userguide/component-details.html). To use the AWS managed components, you can specify the ARN of the AWS Managed Component in the `components` list in the Image Builder Pipeline Configuration.
+
+### Output of the Pipeline
+
+After an EC2 Image Builder image pipeline is established after deploying this stack with proper configuration, it will start automatically to build the AMI based on the components specified in the configuration. The pipeline will take a while to complete and when it is completed, the ID of the new AMI that is built can be found in the following locations:
+
+- In the EC2 Image Builder console, select `Image pipelines` from the left navigation bar, then select the pipeline created by this stack, then look under `Output images`.
+- A parameter is created in AWS System Manager Parameter Store when deploying the pipeline and named as `imagebuilder_ami_<pipeline name>`. The ID of the new AMI built by the pipeline will be stored in this parameter so that it can be read by other stacks if necessary. Before the pipeline finishes building the AMI, the value of this parameter is `n/a`.
 
 ## Deployment
 
