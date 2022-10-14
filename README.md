@@ -14,7 +14,12 @@ The ```CDK``` folder contains sample EC2 Image Builder Cloud Development Kit. Th
 
 ### Components
 
-The ```Components``` contains sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
+The ```Components``` folder contains sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
+
+### Containers
+
+The ```Containers``` folder contains scripts used by EC2 Image Builder during docker image build. The samples demonstrate how to build container images following the steps followed by EC2 Image Builder.
+
 
 ## Additional Learning Resources
 
