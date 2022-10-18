@@ -98,7 +98,7 @@ Resources:
             response_payload = {}
             response_status = cfnresponse.FAILED
             physical_resource_id = 'ssoadmin'
-
+            arn = None
             try:
               if event['RequestType'] == 'Delete':
                 # Nothing to delete:
@@ -123,7 +123,6 @@ Resources:
               print('ERROR: Caught exception:')
               print(e)
               traceback.print_exc()
-
             finally:
               print('Sending cfn response')
               cfnresponse.send(event, context, response_status,
