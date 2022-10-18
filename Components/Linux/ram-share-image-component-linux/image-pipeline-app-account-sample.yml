@@ -14,7 +14,6 @@ Parameters:
   NotificationEmail:
     Description: Email address to receieve notifications
     Type: String
-
  
   SubnetId:
     Description: Subnet Id that will be used to spin up the build server needs access to public internet 
@@ -37,15 +36,12 @@ Parameters:
     Type: String
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the Shared Account
-
   
   KMSKeyArn:
     Type: String
     Description: Key used for Encrypting Image in Shared Account
 
-
 Resources:
-
   EC2IBRole:
     Metadata:
       cfn-lint: { 
@@ -102,7 +98,6 @@ Resources:
         - !Ref EC2IBRole
 
 #Create SNS Topic for Image Builder - SNS publish access for PipelineCloudFormationRole
-
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -170,7 +165,6 @@ Resources:
       Tags:
         ParentOS: AmznLinux2
 
-
   InfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
@@ -182,7 +176,6 @@ Resources:
       SecurityGroupIds: !Ref SecurityGroupIds
       TerminateInstanceOnFailure: true
   
-
   DistributionConfig:
     Type: AWS::ImageBuilder::DistributionConfiguration
     Properties: 
@@ -196,7 +189,6 @@ Resources:
               BuildDate: '{{ imagebuilder:buildDate }}'
               BuildVersion: '{{ imagebuilder:buildVersion }}'
   
-
   ImagePipeline:
     Type: AWS::ImageBuilder::ImagePipeline
     Properties:

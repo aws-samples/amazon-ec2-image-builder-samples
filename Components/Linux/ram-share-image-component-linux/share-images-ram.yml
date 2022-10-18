@@ -6,7 +6,6 @@ Parameters:
     AllowedPattern: ^o-[a-z0-9]{10,32}$
     ConstraintDescription: organization id should start with 'o-' followed by 10-32 alphanumeric characters
 
-
   ManagementAccountId:
     Description: Management Account ID
     Type: String
@@ -32,7 +31,6 @@ Resources:
         - !Sub 'arn:${AWS::Partition}:ram::aws:permission/AWSRAMDefaultPermissionImageBuilderImage'
       Principals:
         - !Sub 'arn:${AWS::Partition}:organizations::${ManagementAccountId}:organization/${OrgId}'
-
 
   #### LambdaIAM ROLE
   LambdaSharingIAMRole:
