@@ -1,21 +1,19 @@
-import { Annotations, Stack, StackProps } from "aws-cdk-lib";
-import { IVpc, SecurityGroup, SubnetType, Vpc } from "aws-cdk-lib/aws-ec2";
-import { IBucket } from "aws-cdk-lib/aws-s3";
-import { BucketDeployment, Source } from "aws-cdk-lib/aws-s3-deployment";
-import { ParameterTier, StringParameter } from "aws-cdk-lib/aws-ssm";
-import { Construct } from "constructs";
-import { existsSync, readdirSync, readFileSync } from "fs";
-import * as path from "path";
+import { Annotations, Stack, StackProps } from 'aws-cdk-lib';
+import { IVpc, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { IBucket } from 'aws-cdk-lib/aws-s3';
+import { ParameterTier, StringParameter } from 'aws-cdk-lib/aws-ssm';
+import { Construct } from 'constructs';
+import { existsSync, readdirSync, readFileSync, lstatSync } from 'fs';
+import * as path from 'path';
 import {
   AWSImageBuilderConstruct,
   ImageBuilderComponent,
   ParentImage,
   PipelineConfig,
-} from "./aws-image-builder";
-import { AWSSecureBucket } from "./aws-secure-bucket";
+} from './aws-image-builder';
 
 /**
- * AWS Image builder constructs stack
+ * AWS Image builder construct stack
  */
 export class ImageBuilderStack extends Stack {
   private readonly imageBuilderToolsBucket: IBucket;
@@ -23,45 +21,22 @@ export class ImageBuilderStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps) {
     super(scope, id, props);
 
-    /**
-     * S3 Bucket
-     * Hosts the Image builder Installation files code.
-     */
-    this.imageBuilderToolsBucket = new AWSSecureBucket(
-      this,
-      "toolsBucket",
-      {}
-    ).bucket;
-
-    const vpc = Vpc.fromLookup(this, "vpc", {
+    const vpc = Vpc.fromLookup(this, 'vpc', {
       isDefault: true,
     });
 
-    /**
-     * S3 Deploy
-     * Uploads react built code to the S3 bucket and invalidates CloudFront
-     */
-
-    new BucketDeployment(this, "Deploy-components", {
-      sources: [Source.asset("./image-builder-components")],
-      destinationBucket: this.imageBuilderToolsBucket,
-      memoryLimit: 3008,
-      prune: false,
-    });
-
     // 👇 Create a SG for a Image builder server
-    const imageBuilderSG = new SecurityGroup(this, "image-server-sg", {
+    const imageBuilderSG = new SecurityGroup(this, 'image-server-sg', {
       vpc: vpc,
       allowAllOutbound: true,
-      description: "security group for a image builder server",
+      description: 'security group for a image builder server',
     });
     // Choose the subnet Image builder server - ensure it has internet
     const imageBuilderSubnetId = vpc.selectSubnets({
       subnetType: SubnetType.PUBLIC,
     }).subnetIds[0];
 
-    const imageBuilderPipelineConfigurations =
-      this.validAndGetPipelineConfiguration();
+    const imageBuilderPipelineConfigurations = this.validAndGetPipelineConfiguration();
     if (!imageBuilderPipelineConfigurations) {
       return;
     }
@@ -75,26 +50,20 @@ export class ImageBuilderStack extends Stack {
       );
     }
   }
+
   private createImageBuilderByConfig(
     imageBuilderPipeline: any,
     imageBuilderSubnetId: string,
     imageBuilderSG: SecurityGroup,
     vpc: IVpc
   ) {
-    const dir = imageBuilderPipeline.dir;
-    const files = readdirSync(dir);
-    if (files.some((f) => !existsSync(f))) {
-    }
-    const componentList: ImageBuilderComponent[] = files.map((file) => ({
-      name: file.split(".")[0],
-      data: this.getData(dir, file),
-    }));
-    const parentImage: ParentImage = imageBuilderPipeline.parentImage;
+    // get component list
+    const componentList = this.parseComponentList(imageBuilderPipeline.components);
 
-    const amiIdLocation = new StringParameter(this, "Parameter", {
-      description: `The value of image`,
-      parameterName: `ec2image_ami_${imageBuilderPipeline.name}`,
-      stringValue: "n/a",
+    const amiIdSSMParameter = new StringParameter(this, 'amiIDSSMParameter', {
+      description: `The id of the ec2 AMI image that is built by image builder pipeline ${imageBuilderPipeline.name}`,
+      parameterName: `imagebuilder_ami_${imageBuilderPipeline.name}`,
+      stringValue: 'n/a',
       tier: ParameterTier.ADVANCED,
     });
 
@@ -102,7 +71,6 @@ export class ImageBuilderStack extends Stack {
       this,
       `AWS-ImageBuilder-Events-${imageBuilderPipeline.name}`,
       {
-        imageBuilderToolsBucket: this.imageBuilderToolsBucket,
         name: imageBuilderPipeline.name,
         subnetId: imageBuilderSubnetId,
         imageBuilderSG: imageBuilderSG,
@@ -110,27 +78,86 @@ export class ImageBuilderStack extends Stack {
         imageBuilderComponentList: componentList,
         cfnImageRecipeName: imageBuilderPipeline.cfnImageRecipeName,
         version: imageBuilderPipeline.version,
-        parentImage: parentImage,
-        amiIdLocation: amiIdLocation,
+        parentImage: imageBuilderPipeline.parentImage,
+        amiIdSSMParameter: amiIdSSMParameter,
         vpc: vpc,
       }
     );
   }
 
-  validAndGetPipelineConfiguration() {
+  private parseComponentList(components: string[]): ImageBuilderComponent[] {
+    // The entry in the components can be in one of the following three types
+    // - arn for AWS managed components
+    // - a directory name that contains one or more component yaml files in it
+    // - a specific path to a component yaml file
+    // this function will parse the list and generate entries for each of them
+
+    const componentList: ImageBuilderComponent[] = [];
+
+    for (const component of components) {
+      // test if component is a valid AWS managed component arn
+      const arnMatch = component.match(
+        /^arn:(?:aws|aws-cn|aws-us-gov|aws-iso|aws-iso-b):imagebuilder:[a-z0-9\-]*:aws:component\/([\w\-]*)\/.*/
+      );
+      if (arnMatch && arnMatch.length > 1) {
+        componentList.push({ name: arnMatch[1], managedComponentArn: component });
+        continue;
+      }
+
+      // test if specified component is a directory
+      const dirPath = path.join(__dirname, '..', component);
+      if (existsSync(dirPath)) {
+        if (lstatSync(dirPath).isDirectory()) {
+          const files = readdirSync(path.join(__dirname, '..', component), {
+            encoding: 'utf-8',
+          });
+          if (files && files.length > 0) {
+            for (const file of files) {
+              const filePath = path.join(__dirname, '..', component, file);
+              if (existsSync(filePath)) {
+                const data = readFileSync(filePath, { encoding: 'utf-8' });
+                componentList.push({
+                  name: file.split('.')[0],
+                  data,
+                });
+              }
+            }
+          }
+          continue;
+        }
+      }
+
+      // if not above, then specified component is a single file
+      const filePath = path.join(__dirname, '..', component);
+      if (existsSync(filePath)) {
+        const filename = path.basename(filePath);
+        const data = readFileSync(filePath, { encoding: 'utf-8' });
+        componentList.push({
+          name: filename.split('.')[0],
+          data,
+        });
+      } else {
+        Annotations.of(this).addError(
+          `Specified component path ${filePath} cannot be found.`
+        );
+      }
+    }
+
+    // return the component list
+    return componentList;
+  }
+
+  private validAndGetPipelineConfiguration() {
     // Get pipeline details from json
     const imageBuilderPipelineConfigurations = this.node.tryGetContext(
-      "ImageBuilderPipelineConfigurations"
+      'ImageBuilderPipelineConfigurations'
     );
 
-    if (
-      imageBuilderPipelineConfigurations ||
-      imageBuilderPipelineConfigurations === ""
-    ) {
+    if (imageBuilderPipelineConfigurations || imageBuilderPipelineConfigurations === '') {
       if (Array.isArray(imageBuilderPipelineConfigurations)) {
         if (imageBuilderPipelineConfigurations.length === 0) {
           Annotations.of(this).addError(
-            "An ImageBuilder pipeline configuration list requires at least one configration, found 0"
+            'An ImageBuilder pipeline configuration list requires at least one configration, found 0'
           );
           return;
         }
@@ -139,7 +166,7 @@ export class ImageBuilderStack extends Stack {
           (<Array<PipelineConfig>>imageBuilderPipelineConfigurations).some(
             (pipeConfig) =>
               !pipeConfig.name ||
-              !pipeConfig.dir ||
+              !pipeConfig.components ||
               !pipeConfig.instanceProfileName ||
               !pipeConfig.version ||
               !pipeConfig.cfnImageRecipeName ||
@@ -147,33 +174,22 @@ export class ImageBuilderStack extends Stack {
           )
         ) {
           Annotations.of(this).addError(
-            "An ImageBuilder pipeline configuration is missing one of the following required values: name, dir, instanceProfileName, version, cfnImageRecipeName, parentImage"
+            'An ImageBuilder pipeline configuration is missing one of the following required values: name, components, instanceProfileName, version, cfnImageRecipeName, parentImage'
           );
           return;
         }
       } else {
         Annotations.of(this).addError(
-          "The imageBuilderPipelinesConfiguration variable must be an array"
+          'The imageBuilderPipelinesConfiguration variable must be an array'
         );
         return;
       }
     } else {
       Annotations.of(this).addError(
-        "Mandaotry configuration ImageBuilderPipelineConfigurations is missing, expecting a list of pipeline configurations"
+        'Mandatory configuration ImageBuilderPipelineConfigurations is missing, expecting a list of pipeline configurations'
       );
       return;
     }
     return imageBuilderPipelineConfigurations;
   }
-
-  getData = (dir: string, file: string) => {
-    const filePath = path.join(__dirname, "..", dir, file);
-    if (!existsSync(filePath)) {
-      Annotations.of(this).addError(
-        `Component file ${filePath} does not exists`
-      );
-      return "";
-    }
-    return readFileSync(path.join(__dirname, "..", dir, file)).toString();
-  };
 }

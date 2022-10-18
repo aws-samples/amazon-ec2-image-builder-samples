@@ -1,4 +1,4 @@
-import { PythonFunction } from "@aws-cdk/aws-lambda-python-alpha";
+import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 import {
   Annotations,
   Aws,
@@ -6,8 +6,8 @@ import {
   CustomResource,
   Duration,
   Stack,
-} from "aws-cdk-lib";
-import { ISecurityGroup, IVpc } from "aws-cdk-lib/aws-ec2";
+} from 'aws-cdk-lib';
+import { ISecurityGroup, IVpc } from 'aws-cdk-lib/aws-ec2';
 import {
   CfnInstanceProfile,
   Effect,
@@ -15,24 +15,21 @@ import {
   PolicyStatement,
   Role,
   ServicePrincipal,
-} from "aws-cdk-lib/aws-iam";
+} from 'aws-cdk-lib/aws-iam';
 import {
   CfnComponent,
   CfnImagePipeline,
   CfnImageRecipe,
   CfnInfrastructureConfiguration,
-} from "aws-cdk-lib/aws-imagebuilder";
-import { Runtime } from "aws-cdk-lib/aws-lambda";
-import { RetentionDays } from "aws-cdk-lib/aws-logs";
-import { IBucket } from "aws-cdk-lib/aws-s3";
-import { ITopic, Topic } from "aws-cdk-lib/aws-sns";
-import {
-  EmailSubscription,
-  LambdaSubscription,
-} from "aws-cdk-lib/aws-sns-subscriptions";
-import { StringParameter } from "aws-cdk-lib/aws-ssm";
-import * as cr from "aws-cdk-lib/custom-resources";
-import { Construct } from "constructs";
+} from 'aws-cdk-lib/aws-imagebuilder';
+import { Runtime } from 'aws-cdk-lib/aws-lambda';
+import { RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { IBucket } from 'aws-cdk-lib/aws-s3';
+import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
+import { EmailSubscription, LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
+import { StringParameter } from 'aws-cdk-lib/aws-ssm';
+import * as cr from 'aws-cdk-lib/custom-resources';
+import { Construct } from 'constructs';
 
 export type ParentImage = Record<string, Record<string, any>>;
 export interface AWSImageBuilderProps {
@@ -40,22 +37,31 @@ export interface AWSImageBuilderProps {
   name: string;
   parentImage: ParentImage;
   subnetId: string;
-  imageBuilderToolsBucket: IBucket;
   imageBuilderSG: ISecurityGroup;
   instanceProfileName: string;
   version: string;
   imageBuilderComponentList: ImageBuilderComponent[];
-  amiIdLocation: StringParameter;
+  amiIdSSMParameter: StringParameter;
   vpc: IVpc;
 }
-export const instanceTypes = ["t3.large", "t3.xlarge"];
+export const instanceTypes = ['t3.large', 't3.xlarge'];
 
 export const HYPHEN = /-/gi;
 
-export const os_types = { LINUX: "Linux" };
+export const os_types = { LINUX: 'Linux' };
 export interface ImageBuilderComponent {
+  /**
+   * Name of the component
+   */
   name: string;
-  data: string;
+  /**
+   * ARN for AWS managed components, when specified, `data` is not required.
+   */
+  managedComponentArn?: string;
+  /**
+   * Content of the component definition yaml file. It will only be used when `managedComponentArn` is not specified
+   */
+  data?: string;
 }
 
 export interface SSMBuilderComponent {
@@ -67,7 +73,7 @@ export interface SSMBuilderComponent {
 
 export interface PipelineConfig {
   name: string;
-  dir: string;
+  components: string[];
   instanceProfileName: string;
   cfnImageRecipeName: string;
   version: string;
@@ -83,35 +89,30 @@ export class AWSImageBuilderConstruct extends Construct {
     //creates a role for Imagebuilder to build EC2 image
     const imageBuilderRole = new Role(this, `ImageBuilderRole${props.name}`, {
       assumedBy: new ServicePrincipal(`ec2.${Aws.URL_SUFFIX}`),
-      path: "/executionServiceEC2Role/",
+      path: '/executionServiceEC2Role/',
     });
 
-    const amiTable = new CfnMapping(this, "ami-table", {
+    const amiTable = new CfnMapping(this, 'ami-table', {
       mapping: props.parentImage,
     });
 
-    const parentImageID: string = amiTable.findInMap(
-      Stack.of(this).region,
-      "amiID"
-    );
+    const parentImageID: string = amiTable.findInMap(Stack.of(this).region, 'amiID');
 
     //creates a the necessary policy for Imagebuilder to build EC2 image
     imageBuilderRole.addToPolicy(
       new PolicyStatement({
-        resources: ["*"],
-        actions: ["s3:PutObject"],
+        resources: ['*'],
+        actions: ['s3:PutObject'],
       })
     );
 
     //Adds SSM  Managed policy to role
     imageBuilderRole.addManagedPolicy(
-      ManagedPolicy.fromAwsManagedPolicyName("AmazonSSMManagedInstanceCore")
+      ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')
     );
     //Adds EC2InstanceProfileForImageBuilder policy to role
     imageBuilderRole.addManagedPolicy(
-      ManagedPolicy.fromAwsManagedPolicyName(
-        "EC2InstanceProfileForImageBuilder"
-      )
+      ManagedPolicy.fromAwsManagedPolicyName('EC2InstanceProfileForImageBuilder')
     );
     //Builds the instance Profile to be attached to EC2 instance created during image building
     const instanceProfile = new CfnInstanceProfile(
@@ -122,18 +123,14 @@ export class AWSImageBuilderConstruct extends Construct {
         instanceProfileName: `${props.instanceProfileName}-${Aws.REGION}`,
       }
     );
-    const notificationTopic = new Topic(
-      this,
-      "ImgBuilderNotificationTopic",
-      {}
-    );
+    const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {});
 
     //Manage Infrastructure configurations
     const cfnInfrastructureConfiguration = new CfnInfrastructureConfiguration(
       this,
       `cfnInfrastructureConfiguration${props.name}`,
       {
-        name: "infraConfiguration",
+        name: 'infraConfiguration',
         instanceProfileName: `${props.instanceProfileName}-${Aws.REGION}`,
         instanceTypes: instanceTypes,
         subnetId: props.subnetId,
@@ -142,27 +139,23 @@ export class AWSImageBuilderConstruct extends Construct {
       }
     );
 
-    const componentArn = props.imageBuilderComponentList.map(
-      (componentList) => ({
-        componentArn: new CfnComponent(this, `${componentList.name}`, {
-          name: `${componentList.name}`,
+    const componentArn = props.imageBuilderComponentList.map((component) => ({
+      componentArn:
+        component.managedComponentArn ??
+        new CfnComponent(this, `${component.name}`, {
+          name: `${component.name}`,
           platform: os_types.LINUX,
           version: props.version,
-          data: `${componentList.data}`,
+          data: `${component.data}`,
         }).attrArn,
-      })
-    );
+    }));
 
-    const cfnImageRecipe = new CfnImageRecipe(
-      this,
-      `cfnImageRecipe${props.name}`,
-      {
-        name: props.cfnImageRecipeName,
-        version: props.version,
-        parentImage: parentImageID,
-        components: componentArn,
-      }
-    );
+    const cfnImageRecipe = new CfnImageRecipe(this, `cfnImageRecipe${props.name}`, {
+      name: props.cfnImageRecipeName,
+      version: props.version,
+      parentImage: parentImageID,
+      components: componentArn,
+    });
 
     const cfnImageBuilderPipeline = new CfnImagePipeline(
       this,
@@ -173,19 +166,19 @@ export class AWSImageBuilderConstruct extends Construct {
         imageRecipeArn: cfnImageRecipe.attrArn,
       }
     );
-    const imagebuilderCr = new PythonFunction(this, "imagebuilderCr", {
-      entry: "lib/lambda/imagebuilder",
+    const imagebuilderCr = new PythonFunction(this, 'imagebuilderCr', {
+      entry: 'lib/lambda/imagebuilder',
       runtime: Runtime.PYTHON_3_8,
-      index: "app.py",
-      handler: "lambda_handler",
+      index: 'app.py',
+      handler: 'lambda_handler',
       environment: {
-        IMAGE_SSM_NAME: props.amiIdLocation.parameterName,
+        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
       },
       timeout: Duration.seconds(45),
       initialPolicy: [
         new PolicyStatement({
           effect: Effect.ALLOW,
-          actions: ["imagebuilder:StartImagePipelineExecution"],
+          actions: ['imagebuilder:StartImagePipelineExecution'],
           resources: [
             `arn:aws:imagebuilder:${Stack.of(this).region}:${
               Stack.of(this).account
@@ -200,14 +193,10 @@ export class AWSImageBuilderConstruct extends Construct {
 
     imagebuilderCr.node.addDependency(cfnImageBuilderPipeline);
 
-    const pipelineTriggerCrProvider = new cr.Provider(
-      this,
-      "pipelineTriggerCrProvider",
-      {
-        onEventHandler: imagebuilderCr,
-        logRetention: RetentionDays.ONE_DAY,
-      }
-    );
+    const pipelineTriggerCrProvider = new cr.Provider(this, 'pipelineTriggerCrProvider', {
+      onEventHandler: imagebuilderCr,
+      logRetention: RetentionDays.ONE_DAY,
+    });
 
     new CustomResource(this, id, {
       serviceToken: pipelineTriggerCrProvider.serviceToken,
@@ -217,18 +206,18 @@ export class AWSImageBuilderConstruct extends Construct {
         }:image-pipeline/${cfnImageBuilderPipeline.name.toLowerCase()}`,
       },
     });
-    const amiIdRecorder = new PythonFunction(this, "imageRecorder", {
-      entry: "lib/lambda/recorder",
+    const amiIdRecorder = new PythonFunction(this, 'imageRecorder', {
+      entry: 'lib/lambda/recorder',
       runtime: Runtime.PYTHON_3_8,
-      index: "app.py",
-      handler: "lambda_handler",
+      index: 'app.py',
+      handler: 'lambda_handler',
       environment: {
-        IMAGE_SSM_NAME: props.amiIdLocation.parameterName,
+        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
       },
     });
 
-    props.amiIdLocation.grantRead(amiIdRecorder);
-    props.amiIdLocation.grantWrite(amiIdRecorder);
+    props.amiIdSSMParameter.grantRead(amiIdRecorder);
+    props.amiIdSSMParameter.grantWrite(amiIdRecorder);
 
     notificationTopic.addSubscription(new LambdaSubscription(amiIdRecorder));
     this.subscribeEmails(notificationTopic);
@@ -238,11 +227,11 @@ export class AWSImageBuilderConstruct extends Construct {
   }
 
   private subscribeEmails(notificationTopic: ITopic) {
-    const emails = this.node.tryGetContext("buildCompletionNotificationEmails");
+    const emails = this.node.tryGetContext('buildCompletionNotificationEmails');
     if (emails) {
       if (!Array.isArray(emails)) {
         Annotations.of(this).addWarning(
-          "buildCompletionNotificationEmails contains invalid value it should be a list of emails, skip subscription"
+          'buildCompletionNotificationEmails contains invalid value it should be a list of emails, skip subscription'
         );
       } else {
         (<Array<string>>emails).forEach((email) =>
