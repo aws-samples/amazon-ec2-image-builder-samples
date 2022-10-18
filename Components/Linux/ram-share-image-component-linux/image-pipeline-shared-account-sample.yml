@@ -15,7 +15,6 @@ Parameters:
     Description: Email address to receieve notifications
     Type: String
 
- 
   SubnetId:
     Description: Subnet Id that will be used to spin up the build server needs access to public internet 
     Type: AWS::EC2::Subnet::Id
@@ -42,15 +41,12 @@ Parameters:
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the App Account
 
-
   AdminPermissionSetName:
     Type: String
-    Description: Admin Access Permission set Name deployed via AWS SSO
+    Description: Admin Access Permission set Name deployed via AWS SSO Used to administer the AWS KMS customer managed key
     Default: AWS_AdministratorAccess
 
-
 Resources:
-
   GetSSORoleArnRole:
     Type: AWS::IAM::Role
     Properties:
@@ -209,14 +205,11 @@ Resources:
               Bool:
                 kms:GrantIsForAWSResource: true
 
-
-  
   KMSKeyAlias: 
     Type: AWS::KMS::Alias
     Properties:
       AliasName: alias/ImageEncryptionKMSKey
       TargetKeyId: !Ref ImageEncryptionKMSKey
-  
   
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
@@ -303,7 +296,6 @@ Resources:
                   - ssm:SendCommand
                   - ec2:CreateTags
                 Resource: '*'
-
   
   EC2InstanceProfile:  
     Type: AWS::IAM::InstanceProfile
@@ -312,10 +304,6 @@ Resources:
       Path: /
       Roles: 
         - !Ref EC2IBRole
-
-#Create SNS Topic for Image Builder - SNS publish access for PipelineCloudFormationRole
-
-
 
   AmznLinuxImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
@@ -341,7 +329,6 @@ Resources:
       Tags:
         ParentOS: AmznLinux2
 
-
   InfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
@@ -353,7 +340,6 @@ Resources:
       SecurityGroupIds: !Ref SecurityGroupIds
       TerminateInstanceOnFailure: true
   
-
   DistributionConfig:
     Type: AWS::ImageBuilder::DistributionConfiguration
     Properties: 
