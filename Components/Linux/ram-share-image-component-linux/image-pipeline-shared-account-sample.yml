@@ -110,12 +110,15 @@ Resources:
 
                 for page in paginator.paginate():
                   for role in page['Roles']:
-                    if(f'AWSReservedSSO_{ADMIN_PERMISSION_SET}' in role['Arn']):
+                    if(f'AWSReservedSSO_{ADMIN_PERMISSION_SET}' in role.get('Arn')):
                       arn = role['Arn']
-
-                response_payload['SSOAdminArn'] = arn
-                response_status = cfnresponse.SUCCESS
-
+                if arn:
+                  response_payload['SSOAdminArn'] = arn
+                  response_status = cfnresponse.SUCCESS
+                else:
+                  print(f'SSOAdminArn: {ADMIN_PERMISSION_SET} passed was not found')
+                  response_payload['SSOAdminArn'] = None
+                  response_status = cfnresponse.FAILED
             except Exception as e:
               print('ERROR: Caught exception:')
               print(e)
