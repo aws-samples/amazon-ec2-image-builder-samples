@@ -3,9 +3,6 @@
 EC2 Image Builder allows customers to build an image pipeline which automates their image creation process starting from a source image installing custom software packages and security patches, the created image can then be shared across regions and other accounts.
 The pipeline can be automated to run on a schedule if there is an available update of the source image or any of the build components 
 
-
-![EC2 Image Builder Flow](./EC2ImageBuilder.png)
-
 Customers who have a dedicated team creating images via EC2 Image Builder service commonly share the images from a shared account.
 
 This sample demonstrates how a child account can reference an image using a [versionless ARN](https://docs.aws.amazon.com/imagebuilder/latest/userguide/ibhow-semantic-versioning.html) to allow building against the latest shared image.
