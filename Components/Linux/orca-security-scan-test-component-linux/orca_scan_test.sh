@@ -10,7 +10,7 @@ usage()
 
   echo "${message}"
   cat <<EOF
-Usage: $(basename ${0}) --api-key API_KEY [options]
+Usage: $(basename ${0}) --api-token API_TOKEN [options]
 
 options:
 
@@ -33,10 +33,10 @@ do
     -h|--help)
       usage 0
       ;;
-    --api-key)
+    --api-token)
       (( ${#} > 1 )) || usage 1 "ERROR: option ${1} requires an argument"
       shift
-      API_KEY="${1}"
+      API_TOKEN="${1}"
       ;;
     -s|--score-threshold)
       (( ${#} > 1 )) || usage 1 "ERROR: option ${1} requires an argument"
@@ -67,7 +67,7 @@ do
   shift
 done
 
-(( ${#API_KEY} )) || usage 1 "ERROR: --api-key is required"
+(( ${#API_TOKEN} )) || usage 1 "ERROR: --api-token is required"
 
 # download jq
 curl -o jq -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64
@@ -96,7 +96,7 @@ case "${REGION}" in
 esac
 
 # scan status polling
-timeout $TIMEOUT_SEC bash ./scan_vm.sh "$ORCA_API_SERVER" "$ACCOUNT_ID" "$INSTANCE_ID" "$API_KEY" "$LOG_FILE_PATH" "$DEBUG_MODE_ON"
+timeout $TIMEOUT_SEC bash ./scan_vm.sh "$ORCA_API_SERVER" "$ACCOUNT_ID" "$INSTANCE_ID" "$API_TOKEN" "$LOG_FILE_PATH" "$DEBUG_MODE_ON"
 EXIT_CODE=$?
 
 if (( EXIT_CODE == 124 )); then

@@ -20,5 +20,5 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            - ./orca_scan_test.sh --api-key <enter_api_key_here>
+            - ./orca_scan_test.sh --api-token <enter_api_token_here>
 
