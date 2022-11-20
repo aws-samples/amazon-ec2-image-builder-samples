@@ -7,7 +7,7 @@ This is a test component that uses Orca Security API to scan and detect known vu
 1. Create a new folder in an S3 bucket and upload `orca_scan_test.sh` and `scan_vm.sh` files to it.
 2. Within the `test_component.yml` document
       - update the `DownloadFiles` step with the S3 path where you uploaded the files from step 1.
-      - update the `RunOrcaScan` step with an orca `api key`.
+      - update the `RunOrcaScan` step with an orca `api token`.
 3. Create a new Image Builder test component with the contents of `test_component.yml`.
 4. Add the component to an image recipe that targets a Linux distribution.
 
@@ -15,7 +15,7 @@ This is a test component that uses Orca Security API to scan and detect known vu
 `orca_scan_test.sh` script provides options that let you configure some scan parameters.
 See script usage:
 ```
-Usage: orca_scan_test.sh --api-key API_KEY [options]
+Usage: orca_scan_test.sh --api-token API_TOKEN [options]
 
 options:
 
