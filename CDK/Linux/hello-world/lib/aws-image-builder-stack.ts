@@ -74,6 +74,8 @@ export class ImageBuilderStack extends Stack {
         name: imageBuilderPipeline.name,
         subnetId: imageBuilderSubnetId,
         imageBuilderSG: imageBuilderSG,
+        debug: imageBuilderPipeline.debug,
+        storageSize: imageBuilderPipeline.storageSize,
         instanceProfileName: imageBuilderPipeline.instanceProfileName,
         imageBuilderComponentList: componentList,
         cfnImageRecipeName: imageBuilderPipeline.cfnImageRecipeName,
