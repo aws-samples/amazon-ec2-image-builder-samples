@@ -159,11 +159,6 @@ export class AWSImageBuilderConstruct extends Construct {
       version: props.version,
       parentImage: parentImageID,
       components: componentArn,
-      additionalInstanceConfiguration: {
-        systemsManagerAgent: {
-          uninstallAfterBuild: terminationConfig,
-        },
-      },
       blockDeviceMappings: [
         {
           deviceName: '/dev/sda1',
