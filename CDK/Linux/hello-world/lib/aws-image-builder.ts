@@ -34,6 +34,8 @@ import { Construct } from 'constructs';
 export type ParentImage = Record<string, Record<string, any>>;
 export interface AWSImageBuilderProps {
   cfnImageRecipeName: string;
+  storageSize?: number;
+  debug?: boolean;
   name: string;
   parentImage: ParentImage;
   subnetId: string;
@@ -125,6 +127,7 @@ export class AWSImageBuilderConstruct extends Construct {
     );
     const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {});
 
+    const terminationConfig = props.debug ? false : true;
     //Manage Infrastructure configurations
     const cfnInfrastructureConfiguration = new CfnInfrastructureConfiguration(
       this,
@@ -136,6 +139,7 @@ export class AWSImageBuilderConstruct extends Construct {
         subnetId: props.subnetId,
         securityGroupIds: [props.imageBuilderSG.securityGroupId],
         snsTopicArn: notificationTopic.topicArn,
+        terminateInstanceOnFailure: terminationConfig,
       }
     );
 
@@ -155,6 +159,17 @@ export class AWSImageBuilderConstruct extends Construct {
       version: props.version,
       parentImage: parentImageID,
       components: componentArn,
+      blockDeviceMappings: [
+        {
+          deviceName: '/dev/sda1',
+          ebs: {
+            deleteOnTermination: terminationConfig,
+            volumeSize: props.storageSize ?? 128,
+            volumeType: 'gp2',
+          },
+          noDevice: '',
+        },
+      ],
     });
 
     const cfnImageBuilderPipeline = new CfnImagePipeline(
