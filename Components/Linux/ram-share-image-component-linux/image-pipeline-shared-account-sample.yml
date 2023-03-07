@@ -141,9 +141,7 @@ Resources:
           ]
         }
       }
-    DependsOn: 
-      - EC2IBRole
-      - AdminSSORoleArn
+    DependsOn: EC2IBRole
     Properties:
       Description: A Symmetric KMS To Be used for Image Encryption
       EnableKeyRotation: true
