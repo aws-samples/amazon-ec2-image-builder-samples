@@ -257,15 +257,14 @@ Resources:
   EC2IBRole:
     Type: AWS::IAM::Role
     Metadata:
-      cfn-lint: { 
-        config: { 
-          ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
-          ignore_reasons: [ 
-            EIAMPolicyWildcardResource: 'Requires full access to function',
-            EIAMPolicyActionWildcard: 'Required in order to properly function'
-          ]
-        }
-      }
+      cfn-lint:
+        config:
+          ignore_checks:
+            - EIAMPolicyWildcardResource
+            - EIAMPolicyActionWildcard
+          ignore_reasons:
+            - EIAMPolicyWildcardResource: Requires full access to function
+            - EIAMPolicyActionWildcard: Required in order to properly function
     Properties:
       RoleName: !Ref IamEC2IBRoleName
       Path: /
