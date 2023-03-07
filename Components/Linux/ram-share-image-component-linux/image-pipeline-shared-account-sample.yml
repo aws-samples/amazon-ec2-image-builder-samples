@@ -132,15 +132,14 @@ Resources:
   ImageEncryptionKMSKey:
     Type: AWS::KMS::Key
     Metadata:
-      cfn-lint: { 
-        config: { 
-          ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
-          ignore_reasons: [ 
-            EIAMPolicyWildcardResource: 'Requires full access to function',
-            EIAMPolicyActionWildcard: 'Required in order to properly function'
-          ]
-        }
-      }
+      cfn-lint:
+        config:
+          ignore_checks:
+            - EIAMPolicyWildcardResource
+            - EIAMPolicyActionWildcard
+          ignore_reasons:
+            - EIAMPolicyWildcardResource: Requires full access to function
+            - EIAMPolicyActionWildcard: Required in order to properly function
     DependsOn: EC2IBRole
     Properties:
       Description: A Symmetric KMS To Be used for Image Encryption
