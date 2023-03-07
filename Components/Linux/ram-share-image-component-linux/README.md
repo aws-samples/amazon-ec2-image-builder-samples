@@ -19,7 +19,7 @@ The child account can reference the image dynamically to ensure the latest image
 To Deploy the solution please follow the following steps:
 
 1. Deploy image-pipeline-shared-account-sample.yml in a shared account
-2. Deploy share-images-ram.yml in the Shared services account
+2. Deploy share-images-ram.yml in the shared services account
 3. Run Pipeline to create an image in shared account and check RAM to see new image shared as expected
 4. Deploy the image-pipeline-app-account-sample.yml
 5. Run the pipeline in app account to see it creating an image starting from latest shared image
