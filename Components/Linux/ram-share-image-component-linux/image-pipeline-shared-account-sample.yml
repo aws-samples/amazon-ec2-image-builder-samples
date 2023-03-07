@@ -216,7 +216,6 @@ Resources:
   
   ImageBuilderSNSPolicy:
     Type: AWS::SNS::TopicPolicy
-    DependsOn: ImageBuilderSNSTopic
     Properties:
       PolicyDocument:
         Id: AllowImageBuilderAccess
