@@ -24,6 +24,7 @@ Parameters:
     Type: List<AWS::EC2::SecurityGroup::Id>
     
   InstanceTypes:
+    Description: Instance type used by ImageBuilder build server
     Type: CommaDelimitedList
     AllowedValues:
       - t3.small
@@ -31,28 +32,30 @@ Parameters:
       - c5.large
       - m5.large
       - r5.large
+    Default: 't3.small, t3.medium'
 
   SharedAccountId:
+    Description: AWS Account ID of the shared account that created the base image
     Type: String
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the Shared Account
   
   KMSKeyArn:
+    Description: CMK Key used for Encrypting Image in Shared Account
     Type: String
-    Description: Key used for Encrypting Image in Shared Account
+
 
 Resources:
   EC2IBRole:
     Metadata:
-      cfn-lint: { 
-        config: { 
-          ignore_checks: [ EIAMPolicyWildcardResource, EIAMPolicyActionWildcard ],
-          ignore_reasons: [ 
-            EIAMPolicyWildcardResource: 'Requires full access to function',
-            EIAMPolicyActionWildcard: 'Required in order to properly function'
-          ]
-        }
-      }
+      cfn-lint:
+        config:
+          ignore_checks:
+            - EIAMPolicyWildcardResource
+            - EIAMPolicyActionWildcard
+          ignore_reasons:
+            - EIAMPolicyWildcardResource: Condition specified
+            - EIAMPolicyActionWildcard: Condition specified
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Ref IamEC2IBRoleName
@@ -63,26 +66,29 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-              - !Sub 'ec2.${AWS::URLSuffix}'
+              - !Sub ec2.${AWS::URLSuffix}
             Action:
               - sts:AssumeRole
       ManagedPolicyArns:
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess'
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
-        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonInspectorFullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
       Policies:
-        - PolicyName: 'EC2ImageBuilderPolicyForInspector'
+        - PolicyName: EC2ImageBuilderPolicyForInspector
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: 2012-10-17
             Statement:
               - Effect: Allow
                 Action:
                   - ssm:SendCommand
                   - ec2:CreateTags
                 Resource: '*'
-        - PolicyName: 'EC2ImageBuilderAppAccount-KMS-Decrypt'
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/CreatedBy: EC2 Image Builder
+        - PolicyName: EC2ImageBuilderAppAccount-KMS-Decrypt
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: 2012-10-17
             Statement:
               - Effect: Allow
                 Action:
@@ -92,7 +98,7 @@ Resources:
   EC2InstanceProfile:  
     Type: AWS::IAM::InstanceProfile
     Properties: 
-      InstanceProfileName: !Sub '${EC2IBRole}Profile'
+      InstanceProfileName: !Sub ${EC2IBRole}Profile
       Path: /
       Roles: 
         - !Ref EC2IBRole
@@ -104,11 +110,20 @@ Resources:
       TopicName: !Ref ImageBuilderSNSTopicName
   
   ImageBuilderSNSPolicy:
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - EIAMPolicyWildcardResource
+            - EIAMPolicyActionWildcard
+          ignore_reasons:
+            - EIAMPolicyWildcardResource: Condition specified
+            - EIAMPolicyActionWildcard: Condition specified
     Type: AWS::SNS::TopicPolicy
     Properties:
       PolicyDocument:
         Id: ImageBuilderSNSPolicy
-        Version: '2012-10-17'
+        Version: 2012-10-17
         Statement:
         - Sid: default-policy-id
           Effect: Allow
@@ -126,11 +141,11 @@ Resources:
           Resource: !Ref ImageBuilderSNSTopic
           Condition: 
             StringEquals:
-              AWS:SourceOwner: !Sub '${AWS::AccountId}'
+              AWS:SourceOwner: !Sub ${AWS::AccountId}
         - Sid: allow-imagebuilder
           Effect: Allow
           Principal:
-            Service: !Sub 'imagebuilder.${AWS::URLSuffix}'
+            Service: !Sub imagebuilder.${AWS::URLSuffix}
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -147,19 +162,19 @@ Resources:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
       Name: AmznLinux2-ImageRecipe-AppAccount
-      Version: '1.0.0'
-      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x'
+      Version: 1.0.0
+      ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x
       Description: Image Recipe for AmznLinux2 Server Images
       Components:
-        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x'
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x
       BlockDeviceMappings:
-        - DeviceName: '/dev/xvda'
+        - DeviceName: /dev/xvda
           Ebs:
             DeleteOnTermination: true
             Encrypted: true # turned on Encryption using default AWS managed key
-            VolumeType: 'gp3'
+            VolumeType: gp3
             VolumeSize: 30
-      WorkingDirectory: '/tmp'
+      WorkingDirectory: /tmp
       Tags:
         ParentOS: AmznLinux2
 
@@ -181,9 +196,9 @@ Resources:
       Distributions:
         - Region: !Ref AWS::Region
           AmiDistributionConfiguration:
-            Name: !Sub 'AmznLinux-Image-{{ imagebuilder:buildDate }}'
+            Name: 'AmznLinux-Image-{{ imagebuilder:buildDate }}'
             AmiTags:
-              Name: !Sub 'AmaznLinux-Image-{{ imagebuilder:buildVersion }}'
+              Name: AmaznLinux-Image-v{{ imagebuilder:buildVersion }}'
               BuildDate: '{{ imagebuilder:buildDate }}'
               BuildVersion: '{{ imagebuilder:buildVersion }}'
   
