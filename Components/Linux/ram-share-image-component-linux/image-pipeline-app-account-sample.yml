@@ -198,7 +198,7 @@ Resources:
           AmiDistributionConfiguration:
             Name: 'AmznLinux-Image-{{ imagebuilder:buildDate }}'
             AmiTags:
-              Name: 'AmaznLinux-Image-v{{ imagebuilder:buildVersion }}'
+              Name: 'AmznLinux-Image-v{{ imagebuilder:buildVersion }}'
               BuildDate: '{{ imagebuilder:buildDate }}'
               BuildVersion: '{{ imagebuilder:buildVersion }}'
   
