@@ -388,3 +388,6 @@ Outputs:
   InfraConfigArn: 
     Description: Infrastructure Config Arn
     Value: !Ref InfraConfig
+  ImageEncryptionKMSKeyArn:
+    Description: KMS Key used to encrypt image
+    Value: !GetAtt ImageEncryptionKMSKey.Arn

@@ -9,7 +9,7 @@ Parameters:
   ImageBuilderSNSTopicName:
     Description: ImageBuilder SNS Topic Name
     Type: String
-    Default: ImageBuilderNotificationsTomCat
+    Default: ImageBuilderNotifications
   
   NotificationEmail:
     Description: Email address to receieve notifications
@@ -40,7 +40,7 @@ Parameters:
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the Shared Account
   
-  KMSKeyArn:
+  SharedImageEncryptionKMSKeyArn:
     Description: CMK Key used for Encrypting Image in Shared Account
     Type: String
 
@@ -93,7 +93,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - kms:Decrypt
-                Resource: !Ref KMSKeyArn
+                Resource: !Ref SharedImageEncryptionKMSKeyArn
 
   EC2InstanceProfile:  
     Type: AWS::IAM::InstanceProfile
