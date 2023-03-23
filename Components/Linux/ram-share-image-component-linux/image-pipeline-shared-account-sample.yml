@@ -10,19 +10,19 @@ Parameters:
     Description: ImageBuilder SNS Topic Name
     Type: String
     Default: ImageBuilderNotifications
-  
+
   NotificationEmail:
     Description: Email address to receieve notifications
     Type: String
 
   SubnetId:
-    Description: Subnet Id that will be used to spin up the build server needs access to public internet 
+    Description: Subnet Id that will be used to spin up the build server needs access to public internet
     Type: AWS::EC2::Subnet::Id
-    
+
   SecurityGroupIds:
     Description: Security Group Id that will be attached to build server
     Type: List<AWS::EC2::SecurityGroup::Id>
-    
+
   InstanceTypes:
     Type: CommaDelimitedList
     Description: Instance type used by ImageBuilder build server
@@ -59,11 +59,11 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Service: 
+              Service:
                 - !Sub lambda.${AWS::URLSuffix}
-            Action: 
+            Action:
               - sts:AssumeRole
-      ManagedPolicyArns: 
+      ManagedPolicyArns:
         - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
         - PolicyName: Lambda
@@ -74,7 +74,7 @@ Resources:
                 Action:
                   - iam:ListRoles
                 Resource: '*'
-    
+
   GetSSORoleArnLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -186,7 +186,7 @@ Resources:
           - Sid: Allow use of the key
             Effect: Allow
             Principal:
-              AWS: 
+              AWS:
                 - !Sub ${EC2IBRole.Arn}
                 - !Sub arn:${AWS::Partition}:iam::${AppAccountId}:root
             Action:
@@ -211,17 +211,17 @@ Resources:
               Bool:
                 kms:GrantIsForAWSResource: true
 
-  KMSKeyAlias: 
+  KMSKeyAlias:
     Type: AWS::KMS::Alias
     Properties:
       AliasName: alias/ImageEncryptionKMSKey
       TargetKeyId: !Ref ImageEncryptionKMSKey
-  
+
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
-  
+
   ImageBuilderSNSPolicy:
     Metadata:
       cfn-lint:
@@ -240,9 +240,9 @@ Resources:
         Statement:
         - Sid: default-policy-id
           Effect: Allow
-          Principal: 
+          Principal:
             AWS : '*'
-          Action: 
+          Action:
             - sns:GetTopicAttributes
             - sns:SetTopicAttributes
             - sns:AddPermission
@@ -252,7 +252,7 @@ Resources:
             - sns:ListSubscriptionsByTopic
             - sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
-          Condition: 
+          Condition:
             StringEquals:
               AWS:SourceOwner: !Sub ${AWS::AccountId}
         - Sid: allow-imagebuilderservice-id
@@ -311,13 +311,13 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:ResourceTag/CreatedBy: EC2 Image Builder
-  
-  EC2InstanceProfile:  
+
+  EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
-    Properties: 
+    Properties:
       InstanceProfileName: !Sub ${EC2IBRole}Profile
       Path: /
-      Roles: 
+      Roles:
         - !Ref EC2IBRole
 
   AmznLinuxImageRecipe:
@@ -350,14 +350,14 @@ Resources:
       Name: InfraConfig-AmznLinux
       InstanceProfileName: !Ref EC2InstanceProfile
       InstanceTypes: !Ref InstanceTypes
-      SnsTopicArn: !Ref  ImageBuilderSNSTopic  
+      SnsTopicArn: !Ref  ImageBuilderSNSTopic
       SubnetId: !Ref SubnetId
       SecurityGroupIds: !Ref SecurityGroupIds
       TerminateInstanceOnFailure: true
-  
+
   DistributionConfig:
     Type: AWS::ImageBuilder::DistributionConfiguration
-    Properties: 
+    Properties:
       Name: AmznLinux-DistributionConfig
       Distributions:
         - Region: !Ref AWS::Region
@@ -369,8 +369,8 @@ Resources:
               BuildDate: '{{ imagebuilder:buildDate }}'
               BuildVersion: '{{ imagebuilder:buildVersion }}'
             LaunchPermissionConfiguration:
-              UserIds: 
-                - !Sub ${AppAccountId}    
+              UserIds:
+                - !Sub ${AppAccountId}
 
   ImagePipeline:
     Type: AWS::ImageBuilder::ImagePipeline
@@ -385,7 +385,7 @@ Resources:
       Status: ENABLED
 
 Outputs:
-  InfraConfigArn: 
+  InfraConfigArn:
     Description: Infrastructure Config Arn
     Value: !Ref InfraConfig
   ImageEncryptionKMSKeyArn:

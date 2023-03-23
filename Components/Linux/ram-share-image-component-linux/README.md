@@ -1,7 +1,7 @@
 # EC2 Image Builder - Image Sharing via RAM for Dynamic Versioning
 
 EC2 Image Builder allows customers to build an image pipeline which automates their image creation process starting from a source image installing custom software packages and security patches, the created image can then be shared across regions and other accounts.
-The pipeline can be automated to run on a schedule if there is an available update of the source image or any of the build components 
+The pipeline can be automated to run on a schedule if there is an available update of the source image or any of the build components
 
 Customers who have a dedicated team creating images via EC2 Image Builder service commonly share the images from a shared account.
 
