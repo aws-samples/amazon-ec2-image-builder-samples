@@ -102,7 +102,6 @@ Resources:
       Roles:
         - !Ref EC2IBRole
 
-#Create SNS Topic for Image Builder - SNS publish access for PipelineCloudFormationRole
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -170,7 +169,7 @@ Resources:
         - DeviceName: /dev/xvda
           Ebs:
             DeleteOnTermination: true
-            Encrypted: true # turned on Encryption using default AWS managed key
+            Encrypted: true
             VolumeType: gp3
             VolumeSize: 30
       WorkingDirectory: /tmp

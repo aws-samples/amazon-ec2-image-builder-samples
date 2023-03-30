@@ -34,7 +34,6 @@ Resources:
       Principals:
         - !Sub arn:${AWS::Partition}:organizations::${ManagementAccountId}:organization/${OrgId}
 
-  #### LambdaIAM ROLE
   LambdaSharingIAMRole:
     Type: AWS::IAM::Role
     Properties:
