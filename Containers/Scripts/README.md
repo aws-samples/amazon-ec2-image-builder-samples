@@ -32,9 +32,9 @@ To run the steps in this README, you will need:
     1. **From a local machine**, Use the ```aws configure``` command to set up your credentials. For more information, see [Configure AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html).
     2. **From an EC2 instance**, You can use ```aws configure``` command or attach an IAM role that has Image Builder permissions to the instance. For more information, see [IAM roles for EC2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html).
 5. In the ```container-build-script.sh``` file, replace the following:
-    1. Replace ```<Image Builder Component ARN>``` with your build component ARN.
-    2. Replace ```<Container Recipe ARN>``` with your container recipe ARN.
-    3. Replace ```<Region>``` the AWS Region where you want to build.
+    1. Replace ```Image-Builder-Component-ARN``` with your build component ARN.
+    2. Replace ```Container-Recipe-ARN``` with your container recipe ARN.
+    3. Replace ```Region``` the AWS Region where you want to build.
 6. Execute ```container-build-script.sh```
     1. Update the file permissions to allow you to run the script. ```chmod +x container-build-script.sh```
     2. Run the script. ```./container-build-script.sh```
