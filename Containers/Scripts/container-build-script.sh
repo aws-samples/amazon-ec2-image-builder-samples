@@ -57,7 +57,7 @@ function install_package() {
         if ! package_exists curl ; then
             install_package curl
         fi
-        curl https://ec2imagebuilder-toe-<REGION>-prod.s3.<REGION>.amazonaws.com/bootstrap_scripts/bootstrap.sh -o ${TOE_DIR}/bootstrap.sh --silent --create-dirs
+        curl https://ec2imagebuilder-toe-Region-prod.s3.Region.amazonaws.com/bootstrap_scripts/bootstrap.sh -o ${TOE_DIR}/bootstrap.sh --silent --create-dirs
         chmod +x ${TOE_DIR}/bootstrap.sh
         stderr=$(${TOE_DIR}/bootstrap.sh ${TOE_DIR} 2>&1)
         if [ $? -ne 0 ]; then
@@ -139,7 +139,7 @@ cat << 'EOS' > ${IMAGE_BUILDER_DIR}/build_input_config.json
   "phases": "build,validate",
   "documents": [
     {
-      "path": "<Image Builder Component ARN>"
+      "path": "Image-Builder-Component-ARN"
     }
   ]
 }
@@ -147,7 +147,7 @@ EOS
 
 PHASE=build,validate
 
-AWSTOE_IMAGEBUILDER_ENDPOINT=https://imagebuilder.<REGION>.amazonaws.com ${TOE_DIR}/awstoe run --config ${IMAGE_BUILDER_DIR}/build_input_config.json -p ${PHASE} -l ${TOE_LOG_DIR} | tee ${IMAGE_BUILDER_DIR}/TOE_LOGS
+AWSTOE_IMAGEBUILDER_ENDPOINT=https://imagebuilder.Region.amazonaws.com ${TOE_DIR}/awstoe run --config ${IMAGE_BUILDER_DIR}/build_input_config.json -p ${PHASE} -l ${TOE_LOG_DIR} | tee ${IMAGE_BUILDER_DIR}/TOE_LOGS
 
 EXIT_CODE=${PIPESTATUS[0]}
 if [ $EXIT_CODE != "194" ] ; then
@@ -162,7 +162,7 @@ cleanup
 cleanup_toe
 EOF
 
-aws imagebuilder get-container-recipe --container-recipe-arn <Container Recipe ARN>  --endpoint-url https://imagebuilder.<REGION>.amazonaws.com --region <REGION> --query 'containerRecipe.dockerfileTemplateData' --output text > /tmp/imagebuilder_service/dockerfile_template
+aws imagebuilder get-container-recipe --container-recipe-arn Container-Recipe-ARN --endpoint-url https://imagebuilder.Region.amazonaws.com --region Region --query 'containerRecipe.dockerfileTemplateData' --output text > /tmp/imagebuilder_service/dockerfile_template
 
 sed -i 's/imagebuilder:parentImage/parentImage/g; s/imagebuilder:environments/environments/g; s/imagebuilder:components/components/g' /tmp/imagebuilder_service/dockerfile_template
 
