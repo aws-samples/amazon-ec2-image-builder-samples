@@ -79,7 +79,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: Get-Account-AdminSSORoleArn
-      Runtime: python3.8
+      Runtime: python3.12
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt GetSSORoleArnRole.Arn

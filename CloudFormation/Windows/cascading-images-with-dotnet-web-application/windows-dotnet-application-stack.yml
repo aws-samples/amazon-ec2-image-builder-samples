@@ -458,7 +458,7 @@ Resources:
     Properties:
       Description: Returns the lowercase version of a string
       MemorySize: 256
-      Runtime: python3.8
+      Runtime: python3.12
       Handler: index.lambda_handler
       Role: !GetAtt LowerCaseLambdaRole.Arn
       Timeout: 30

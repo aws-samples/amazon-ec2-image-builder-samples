@@ -91,7 +91,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Description: Function that shares images created by ImageBuilder via RAM
-      Runtime: python3.8
+      Runtime: python3.12
       Role: !Sub ${LambdaSharingIAMRole.Arn}
       Handler: index.lambda_handler
       Environment:
