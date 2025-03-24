@@ -19,7 +19,7 @@
     "@aws-cdk/aws-lambda-python-alpha": "^2.17.0-alpha.0",
     "@types/node": "16.11.9",
     "aws-cdk": "2.17.0",
-    "aws-cdk-lib": "^2.177.0",
+    "aws-cdk-lib": "^2.185.0",
     "aws-sdk": "^2.1354.0",
     "cdk-nag": "^2.10.5",
     "constructs": "^10.0.0",
