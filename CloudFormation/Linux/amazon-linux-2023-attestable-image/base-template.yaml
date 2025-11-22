@@ -1,0 +1,749 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Base infrastructure for building attestable Amazon Linux 2023 AMIs using EC2 Image Builder and kiwi-ng"
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Resource Configuration"
+        Parameters:
+          - ResourceNamePrefix
+          - ImageBuilderResourceVersion
+      - Label:
+          default: "Infrastructure Configuration"
+        Parameters:
+          - InstanceType
+          - SubnetId
+          - SecurityGroupId
+          - KeyPair
+          - TerminateInstanceOnFailure
+    ParameterLabels:
+      ResourceNamePrefix:
+        default: "Resource Name Prefix"
+      ImageBuilderResourceVersion:
+        default: "Image Builder Resource Version"
+      InstanceType:
+        default: "Instance Type"
+      SubnetId:
+        default: "Subnet ID"
+      SecurityGroupId:
+        default: "Security Group ID"
+      KeyPair:
+        default: "Key Pair"
+      TerminateInstanceOnFailure:
+        default: "Terminate Instance On Failure"
+
+Parameters:
+  ResourceNamePrefix:
+    Type: String
+    Description: Prefix for resource names
+    Default: "attestable-ami"
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID for Image Builder Instance
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group ID for Image Builder Instance
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: SSH key pair for troubleshooting
+  TerminateInstanceOnFailure:
+    Type: String
+    Description: Terminate Instance On Build Failure
+    Default: true
+    AllowedValues: [true, false]
+  ImageBuilderResourceVersion:
+    Type: String
+    Description: Image Builder Resource Version
+    Default: "1.0.0"
+    AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+  InstanceType:
+    Type: String
+    Description: EC2 instance type for Image Builder
+    Default: "c7i.2xlarge"
+
+Conditions:
+  UseCustomSubnetId: !Not [!Equals [!Ref SubnetId, ""]]
+  UseKeyPair: !Not [!Equals [!Ref KeyPair, ""]]
+
+Resources:
+  LogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: !Sub ec2.${AWS::URLSuffix}
+        Version: "2012-10-17"
+      Path: !Sub "/ib-${ResourceNamePrefix}/"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ResourceNamePrefix}-InstanceLogging"
+      Roles:
+        - !Ref InstanceRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: s3:PutObject
+            Effect: Allow
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${LogBucket}/*"
+
+  InstanceRoleIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ResourceNamePrefix}-InstanceAccessPolicy"
+      Roles:
+        - !Ref InstanceRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Effect: Allow
+            Resource:
+              - !Sub "arn:${AWS::Partition}:s3:::*"
+              - !Sub "arn:${AWS::Partition}:s3:::*/*"
+          - Action:
+              - ec2:DescribeSnapshots
+              - ec2:GetEbsDefaultKmsKeyId
+              - ec2:GetEbsEncryptionByDefault
+              - ec2:DescribeInstances
+            Effect: Allow
+            Resource: "*"
+          - Action:
+              - ebs:CompleteSnapshot
+              - ebs:GetSnapshotBlock
+              - ebs:ListChangedBlocks
+              - ebs:ListSnapshotBlocks
+              - ebs:PutSnapshotBlock
+              - ebs:StartSnapshot
+            Effect: Allow
+            Resource: !Sub "arn:${AWS::Partition}:ec2:*::snapshot/*"
+          - Action: ec2:RegisterImage
+            Effect: Allow
+            Resource: !Sub "arn:${AWS::Partition}:ec2:*::image/*"
+            Condition:
+              StringEquals:
+                aws:RequestTag/CreatedBy: EC2 Image Builder
+          - Action: ec2:RegisterImage
+            Effect: Allow
+            Resource: !Sub "arn:${AWS::Partition}:ec2:*::snapshot/*"
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/CreatedBy: EC2 Image Builder
+          - Action: ec2:CreateTags
+            Effect: Allow
+            Resource: "*"
+            Condition:
+              StringEquals:
+                aws:RequestTag/CreatedBy: EC2 Image Builder
+                ec2:CreateAction:
+                  - RunInstances
+                  - CreateImage
+          - Action:
+              - ec2:CreateTags
+            Effect: Allow
+            Resource:
+              - "arn:aws:ec2:*::image/*"
+          - Action:
+              - ec2:CreateTags
+            Effect: Allow
+            Resource:
+              - "arn:aws:ec2:*::snapshot/*"
+            Condition:
+              StringEquals:
+                aws:RequestTag/CreatedBy: EC2 Image Builder
+
+  ImageBuilderExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      Comment: Minimal execution role for this use-case, does not duplicate the EC2 Image Builder Service Linked Role.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: imagebuilder.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/EC2ImageBuilderLifecycleExecutionPolicy
+      Policies:
+        - PolicyName: !Sub "${ResourceNamePrefix}-EC2ImageBuilderExecutionPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:RegisterImage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*::image/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action: ec2:RegisterImage
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*::snapshot/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*::image/*
+                  - !Sub arn:${AWS::Partition}:ec2:*::snapshot/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:subnet/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:network-interface/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:security-group/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:key-pair/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:launch-template/*
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:volume/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:instance/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - ec2.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - ec2:StopInstances
+                  - ec2:StartInstances
+                  - ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:CopyImage
+                  - ec2:CreateImage
+                  - ec2:CreateLaunchTemplate
+                  - ec2:DeregisterImage
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstanceAttribute
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceTypeOfferings
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                  - ec2:ModifyImageAttribute
+                  - ec2:DescribeImportImageTasks
+                  - ec2:DescribeExportImageTasks
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeHosts
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ec2:ModifySnapshotAttribute
+                Resource: !Sub arn:${AWS::Partition}:ec2:*::snapshot/*
+                Condition:
+                  StringEquals:
+                    ec2:ResourceTag/CreatedBy: EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - RunInstances
+                      - CreateImage
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*::image/*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*::snapshot/*
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:launch-template/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/CreatedBy:
+                      - EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - ssm:ListCommands
+                  - ssm:ListCommandInvocations
+                  - ssm:AddTagsToResource
+                  - ssm:DescribeInstanceInformation
+                  - ssm:ListInventoryEntries
+                  - ssm:GetCommandInvocation
+                  - ssm:GetDocument
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: "*"
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:*:*:document/AWS-RunShellScript
+                  - !Sub arn:${AWS::Partition}:ssm:*:*:document/${CreateOutputAmiDocument}
+                  - !Sub arn:${AWS::Partition}:s3:::*
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:*:*:instance/*
+                Condition:
+                  StringEquals:
+                    ssm:resourceTag/CreatedBy:
+                      - EC2 Image Builder
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncryptFrom
+                  - kms:ReEncryptTo
+                  - kms:GenerateDataKeyWithoutPlaintext
+                Resource: "*"
+                Condition:
+                  ForAllValues:StringEquals:
+                    kms:EncryptionContextKeys:
+                      - aws:ebs:id
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - kms:DescribeKey
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action: kms:CreateGrant
+                Resource: "*"
+                Condition:
+                  Bool:
+                    kms:GrantIsForAWSResource: true
+                  StringLike:
+                    kms:ViaService:
+                      - ec2.*.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:*:*:log-group:/aws/imagebuilder/*
+              - Effect: Allow
+                Action:
+                  - ec2:CreateLaunchTemplateVersion
+                  - ec2:DescribeLaunchTemplates
+                  - ec2:ModifyLaunchTemplate
+                  - ec2:DescribeLaunchTemplateVersions
+                Resource: "*"
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - ssm.amazonaws.com
+              - Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                Resource:
+                  - !Sub arn:${AWS::Partition}:events:*:*:rule/ImageBuilder-*
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: !Sub "${ResourceNamePrefix}-infrastructure"
+      InstanceMetadataOptions:
+        HttpPutResponseHopLimit: 1
+        HttpTokens: required
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - !Ref InstanceType
+      KeyPair: !If [UseKeyPair, !Ref KeyPair, !Ref "AWS::NoValue"]
+      TerminateInstanceOnFailure: !Ref TerminateInstanceOnFailure
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref LogBucket
+          S3KeyPrefix: !Sub imagebuilder-${AWS::StackName}
+      SubnetId: !If [UseCustomSubnetId, !Ref SubnetId, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !If [UseCustomSubnetId, !Ref SecurityGroupId, !Ref "AWS::NoValue"]
+
+  KiwiNgComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub "${ResourceNamePrefix}-invoke-kiwi-ng"
+      Platform: Linux
+      Version: !Ref ImageBuilderResourceVersion
+      Description: Downloads a kiwi-ng recipe from S3, invokes kiwi-ng, creates an EBS Snapshot from the generated image, and registers the Snapshot as an AMI.
+      Data: |
+        name: invoke-kiwi-ng
+        description: Downloads a kiwi-ng recipe from S3, invokes kiwi-ng, creates an EBS Snapshot from the generated image, and registers the Snapshot as an AMI.
+        schemaVersion: 1.0
+        parameters:
+          - RecipeSource:
+              type: string
+              description: The S3 URI to the kiwi-ng recipe or 'local:/path/to/recipe' for local recipes.
+          - RawImageFilePath:
+              type: string
+              default: /disk_image.raw
+              description: 'The path to the generated disk image.'
+          - TagSpecificationsFilePath:
+              type: string
+              default: /tag_specification.json
+              description: 'The path to the tag specification file.'
+          - IncludePcrMeasurements:
+              type: string
+              default: 'no'
+              description: 'If set to "yes", the PCR4 and PCR7 values will be used to create a tag specification file.'
+              allowedValues: ['no', 'yes']
+        phases:
+          - name: build
+            steps:
+              - name: RemoveTrailingSlash
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - echo "{{ RecipeSource }}" | sed 's/\/$//'
+              - name: CheckRecipeType
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      if [[ "{{ build.RemoveTrailingSlash.outputs.stdout }}" == local:* ]]; then
+                        echo "local"
+                      else
+                        echo "s3"
+                      fi
+              - name: AssertS3Source
+                action: Assert
+                onFailure: Abort
+                if:
+                  value: '{{ build.CheckRecipeType.outputs.stdout }}'
+                  stringEquals: 's3'
+                inputs:
+                  patternMatches: '^s3:\/\/.*\/.*$'
+                  value: '{{ build.RemoveTrailingSlash.outputs.stdout }}'
+              - name: InstallPreRequisites
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - dnf install -y kiwi-cli python3-kiwi kiwi-systemdeps-core python3-poetry-core qemu-img veritysetup erofs-utils git cargo aws-nitro-tpm-tools
+                    - git clone https://github.com/awslabs/coldsnap.git
+                    - cd coldsnap
+                    - cargo install --locked coldsnap 2>&1
+              - name: InstallSampleRecipe
+                action: ExecuteBash
+                if:
+                  value: '{{ build.CheckRecipeType.outputs.stdout }}'
+                  stringEquals: 'local'
+                inputs:
+                  commands:
+                    - dnf install -y kiwi-image-descriptions-examples
+              - name: TempDir
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - mktemp -d
+              - name: CreateDirectoryStructure
+                action: CreateFolder
+                if:
+                  value: '{{ build.CheckRecipeType.outputs.stdout }}'
+                  stringEquals: 's3'
+                inputs:
+                  - path: '{{ build.TempDir.outputs.stdout }}/recipe'
+              - name: DownloadRecipe
+                action: S3Download
+                if:
+                  value: '{{ build.CheckRecipeType.outputs.stdout }}'
+                  stringEquals: 's3'
+                inputs:
+                  - source: '{{ build.RemoveTrailingSlash.outputs.stdout }}/*'
+                    destination: '{{ build.TempDir.outputs.stdout }}/recipe/'
+              - name: SetRecipePath
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      if [[ "{{ build.CheckRecipeType.outputs.stdout }}" == "local" ]]; then
+                        echo "{{ build.RemoveTrailingSlash.outputs.stdout }}" | sed 's/^local://'
+                      else
+                        echo "{{ build.TempDir.outputs.stdout }}/recipe/"
+                      fi
+              - name: RunKiwi
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - kiwi-ng --color-output --loglevel 0 system build --description {{ build.SetRecipePath.outputs.stdout }} --target-dir $WORKING_DIRECTORY
+                    - find $WORKING_DIRECTORY -name "*.raw" | head -n 1 | xargs -I {} mv {} {{ RawImageFilePath }}
+              - name: CreateTagSpecificationsJson
+                action: ExecuteBash
+                if:
+                  value: '{{ IncludePcrMeasurements }}'
+                  stringEquals: 'yes'
+                inputs:
+                  commands:
+                    - |
+                      # $WORKING_DIRECTORY is an environment variable defined by EC2 Image Builder
+                      # TAG_SPECIFICATION_FILE="{{ TagSpecificationsFilePath }}"
+                      TAG_SPECIFICATION_FILE="/tag_specification.json"
+                      PCR_MEASUREMENTS_FILE="$WORKING_DIRECTORY/pcr_measurements.json"
+
+                      if [ -f "$PCR_MEASUREMENTS_FILE" ]; then
+                        # Use jq to extract PCR values and create the tag specification file
+                        # This will:
+                        # 1. Extract PCR4 and PCR7 values from the source file
+                        # 2. Create objects with Key/Value pairs for each PCR value that exists
+                        # 3. Filter out any null values to only include PCRs that exist
+                        # 4. Output the result as a JSON array in the format:
+                        #    [{"Key": "<key>", "Value": "<value>"}]
+                        PCR4=$(jq -r '.Measurements.PCR4 // empty' "$PCR_MEASUREMENTS_FILE")
+                        PCR7=$(jq -r '.Measurements.PCR7 // empty' "$PCR_MEASUREMENTS_FILE")
+                        jq -n --arg pcr4 "$PCR4" \
+                              --arg pcr7 "$PCR7" \
+                              '[
+                                {"Key": "PCR4", "Value": $pcr4},
+                                {"Key": "PCR7", "Value": $pcr7}
+                              ] | [.[] | select(.Value != "")]' > "$TAG_SPECIFICATION_FILE"
+
+                        echo "Created tag specification file at $TAG_SPECIFICATION_FILE"
+                      else
+                        echo "Warning: pcr_measurements.json file not found at $PCR_MEASUREMENTS_FILE"
+                        # Create an empty JSON array if the source file doesn't exist
+                        echo "[]" > "$TAG_SPECIFICATION_FILE"
+                        echo "Created empty tag specification file at $TAG_SPECIFICATION_FILE"
+                      fi
+
+  CreateOutputAmiDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: 'Creates an AMI from a raw disk image'
+        parameters:
+          rawImagePath:
+            type: String
+            description: 'The path to the raw disk image'
+            default: '/disk_image.raw'
+          tagSpecificationsFilePath:
+            type: String
+            description: 'The path to the tag specifications file'
+            default: '/tag_specification.json'
+          imageNamePrefix:
+            type: String
+            description: 'The prefix to use for the AMI name'
+        mainSteps:
+          - action: aws:runShellScript
+            name: CreateOutputAmi
+            inputs:
+              runCommand:
+                - 'set -e'
+                - 'DISK_IMAGE="{{ rawImagePath }}"'
+                - 'TAG_SPECIFICATION_FILE="{{ tagSpecificationsFilePath }}"'
+                - 'IMAGE_NAME_PREFIX="{{ imageNamePrefix }}"'
+                - ''
+                - 'TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")'
+                - 'INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)'
+                - 'IMAGE_BUILD_VERSION_ARN=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].Tags" --output text | grep "Ec2ImageBuilderArn" | awk "{print \$2}")'
+                - ''
+                - 'if [ -z "$IMAGE_BUILD_VERSION_ARN" ] || [ "$IMAGE_BUILD_VERSION_ARN" = "None" ]; then'
+                - '  echo "Warning: Ec2ImageBuilderArn tag not found, using default value"'
+                - '  IMAGE_BUILD_VERSION_ARN="unknown"'
+                - 'fi'
+                - ''
+                - '# Generate the image name that will be used for both AMI and snapshot'
+                - 'IMAGE_NAME="$IMAGE_NAME_PREFIX-$(date +%Y%m%d%H%M%S)"'
+                - ''
+                - '# Initialize tag arguments with default tags'
+                - 'TAG_ARGS=('
+                - '  "--tag" "Key=Name,Value=$IMAGE_NAME"'
+                - '  "--tag" "Key=CreatedBy,Value=EC2 Image Builder"'
+                - '  "--tag" "Key=Ec2ImageBuilderArn,Value=$IMAGE_BUILD_VERSION_ARN"'
+                - '  "--tag" "Key=ImageBuildVersionArn,Value=$IMAGE_BUILD_VERSION_ARN"'
+                - ')'
+                - ''
+                - '# Add dynamic tags from tag specification file if it exists'
+                - 'if [ -f "$TAG_SPECIFICATION_FILE" ]; then'
+                - '  # Check if jq is available'
+                - '  if command -v jq &> /dev/null; then'
+                - '    # Process each tag in the JSON file'
+                - '    while read -r key value; do'
+                - '      TAG_ARGS+=("--tag" "Key=$key,Value=$value")'
+                - '    done < <(jq -r ''.[] | .Key + " " + .Value'' "$TAG_SPECIFICATION_FILE")'
+                - '  else'
+                - '    echo "Warning: jq is not installed. Cannot parse tag specification file."'
+                - '  fi'
+                - 'fi'
+                - ''
+                - '# Format tags for EC2 register-image command'
+                - 'EC2_TAG_SPECS="ResourceType=image,Tags=["'
+                - 'first=true'
+                - 'for ((i=0; i<${#TAG_ARGS[@]}; i+=2)); do'
+                - '  if [[ ${TAG_ARGS[i]} == "--tag" ]]; then'
+                - '    # Extract Key=Value from the tag argument'
+                - '    tag_kv=${TAG_ARGS[i+1]}'
+                - ''
+                - '    # Add comma separator if not the first tag'
+                - '    if [ "$first" = true ]; then'
+                - '      first=false'
+                - '    else'
+                - '      EC2_TAG_SPECS+=","'
+                - '    fi'
+                - ''
+                - '    # Add the tag in the format {Key=key,Value=value}'
+                - '    EC2_TAG_SPECS+="{$tag_kv}"'
+                - '  fi'
+                - 'done'
+                - 'EC2_TAG_SPECS+="]"'
+                - ''
+                - '# Execute coldsnap command with all tags'
+                - 'SNAPSHOT_ID=$(~/.cargo/bin/coldsnap upload "$DISK_IMAGE" \'
+                - '  --description "Snapshot for $IMAGE_BUILD_VERSION_ARN" \'
+                - '  "${TAG_ARGS[@]}" \'
+                - '  --wait)'
+                - ''
+                - '# Validate snapshot ID before proceeding'
+                - 'if [ -z "$SNAPSHOT_ID" ]; then'
+                - '  echo "Error: Failed to create snapshot - SNAPSHOT_ID is empty"'
+                - '  exit 1'
+                - 'fi'
+                - ''
+                - 'ARCH=$(uname -m)'
+                - 'if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then'
+                - '    ARCH="x86_64"'
+                - 'elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "armv8l" ]; then'
+                - '    ARCH="arm64"'
+                - 'fi'
+                - 'IMAGE_ID=$(aws ec2 register-image \'
+                - '  --name "$IMAGE_NAME" \'
+                - '  --description "Built using EC2 Image Builder" \'
+                - '  --architecture "$ARCH" \'
+                - '  --root-device-name "/dev/xvda" \'
+                - '  --virtualization-type hvm \'
+                - '  --ena-support \'
+                - '  --boot-mode uefi \'
+                - '  --tpm-support v2.0 \'
+                - '  --block-device-mappings "DeviceName=/dev/xvda,Ebs={SnapshotId=$SNAPSHOT_ID}" \'
+                - '  --tag-specifications "$EC2_TAG_SPECS" \'
+                - '  --query ''ImageId'' \'
+                - '  --output text)'
+                - 'echo $IMAGE_ID'
+
+  ImageWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: !Sub "${ResourceNamePrefix}-build-image-with-coldsnap"
+      Description: Creates AMI from a raw disk image using coldsnap.
+      Type: BUILD
+      Version: !Ref ImageBuilderResourceVersion
+      Data: !Sub |
+        name: ${ResourceNamePrefix}-build-image-with-coldsnap
+        description: Creates AMI from a raw disk image using coldsnap.
+        schemaVersion: 1.0
+        parameters:
+          - name: ImageNamePrefix
+            type: string
+            default: attestable-ami
+            description: Prefix for the AMI name
+        steps:
+          - name: LaunchBuildInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: "ssmAgent"
+          - name: ApplyBuildComponents
+            action: ExecuteComponents
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+          - name: CreateOutputAmi
+            action: RunCommand
+            onFailure: Abort
+            inputs:
+              documentName: "${CreateOutputAmiDocument}"
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+              parameters:
+                imageNamePrefix.$:
+                  - "$.parameters.ImageNamePrefix"
+                rawImagePath:
+                  - "/disk_image.raw"
+                tagSpecificationsFilePath:
+                  - "/tag_specification.json"
+          - name: TerminateBuildInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+        outputs:
+          - name: "ImageId"
+            value: "$.stepOutputs.CreateOutputAmi.output[0]"
+
+Outputs:
+  InfrastructureConfigurationArn:
+    Value: !GetAtt InfrastructureConfiguration.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InfrastructureConfigurationArn"
+  ImageBuilderExecutionRoleArn:
+    Value: !GetAtt ImageBuilderExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ImageBuilderExecutionRoleArn"
+  ImageWorkflowArn:
+    Value: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:workflow/build/${ResourceNamePrefix}-build-image-with-coldsnap/x.x.x"
+    Export:
+      Name: !Sub "${AWS::StackName}-ImageWorkflowArn"
+  KiwiNgComponentArn:
+    Value: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:component/${ResourceNamePrefix}-invoke-kiwi-ng/x.x.x"
+    Export:
+      Name: !Sub "${AWS::StackName}-KiwiNgComponentArn"
