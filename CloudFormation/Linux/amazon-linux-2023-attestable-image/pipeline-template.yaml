@@ -1,0 +1,128 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Image pipeline for building attestable Amazon Linux 2023 AMIs using kiwi-ng recipes"
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Base Stack Configuration"
+        Parameters:
+          - BaseStackName
+      - Label:
+          default: "Image Builder Resource Configuration"
+        Parameters:
+          - ResourceNamePrefix
+          - ImageBuilderResourceVersion
+          - LogRetentionInDays
+      - Label:
+          default: "Build Recipe Configuration"
+        Parameters:
+          - RecipeSource
+          - IncludePcrMeasurements
+    ParameterLabels:
+      BaseStackName:
+        default: "Base Stack Name"
+      RecipeSource:
+        default: "S3 URI to custom kiwi-ng recipe (optional). Leave empty to use Amazon Linux sample recipe."
+      IncludePcrMeasurements:
+        default: "Include PCR Measurements"
+      ResourceNamePrefix:
+        default: "Image Builder and AMI Name Prefix"
+      ImageBuilderResourceVersion:
+        default: "Image Builder Resource Version"
+      LogRetentionInDays:
+        default: "Log Retention Period (Days)"
+
+Parameters:
+  BaseStackName:
+    Type: String
+    Description: Name of the base stack containing reusable resources.
+  ResourceNamePrefix:
+    Type: String
+    Description: Prefix for Image Builder resources and the AMI name.
+    Default: "attestable-ami"
+  RecipeSource:
+    Type: String
+    Description: The S3 URI to the kiwi-ng recipe. Leave empty to use Amazon Linux sample recipe.
+    AllowedPattern: ^(s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](/.*)?)??$
+    ConstraintDescription: Must be a valid S3 URI (e.g., s3://bucket-name/path/to/recipe) or empty
+    Default: ''
+  IncludePcrMeasurements:
+    Type: String
+    Description: When set to "yes", the measured PCR4 and PCR7 values will be generated and included as AMI Tags.
+    Default: 'yes'
+    AllowedValues:
+      - 'yes'
+      - 'no'
+  ImageBuilderResourceVersion:
+    Type: String
+    Description: The version for Image Builder resources.
+    Default: "1.0.0"
+    AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
+    ConstraintDescription: Must be a valid semantic version (e.g., 1.0.0)
+  LogRetentionInDays:
+    Type: Number
+    Description: CloudWatch log retention period in days
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+
+Conditions:
+  HasCustomRecipe: !Not [!Equals [!Ref RecipeSource, ""]]
+
+Resources:
+  ImageBuilderLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/imagebuilder/${ImageRecipe.Name}"
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Sub "${ResourceNamePrefix}-x86_64-recipe"
+      Version: !Ref ImageBuilderResourceVersion
+      ParentImage: "ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+      Components:
+        - ComponentArn: !ImportValue
+            Fn::Sub: "${BaseStackName}-KiwiNgComponentArn"
+          Parameters:
+            - Name: RecipeSource
+              Value:
+                - !If
+                  - HasCustomRecipe
+                  - !Ref RecipeSource
+                  - "local:/usr/share/kiwi-image-descriptions-examples/al2023/attestable-image-example"
+            - Name: IncludePcrMeasurements
+              Value:
+                - !Ref IncludePcrMeasurements
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Sub "${ResourceNamePrefix}-x86_64-pipeline"
+      Description: Pipeline for building attestable AMIs using kiwi-ng
+      ExecutionRole: !ImportValue
+        Fn::Sub: "${BaseStackName}-ImageBuilderExecutionRoleArn"
+      ImageRecipeArn: !GetAtt ImageRecipe.Arn
+      InfrastructureConfigurationArn: !ImportValue
+        Fn::Sub: "${BaseStackName}-InfrastructureConfigurationArn"
+      Workflows:
+        - WorkflowArn: !ImportValue
+            Fn::Sub: "${BaseStackName}-ImageWorkflowArn"
+          Parameters:
+            - Name: ImageNamePrefix
+              Value:
+                - !Ref ResourceNamePrefix
+      Status: ENABLED
+
+Outputs:
+  ImagePipelineArn:
+    Description: ARN of the Image Pipeline
+    Value: !GetAtt ImagePipeline.Arn
+  ImageRecipeArn:
+    Description: ARN of the Image Recipe
+    Value: !GetAtt ImageRecipe.Arn
