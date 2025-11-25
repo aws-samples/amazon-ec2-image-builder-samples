@@ -58,7 +58,6 @@ Parameters:
     Type: String
     Description: Image Builder Resource Version
     Default: "1.0.0"
-    AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
   InstanceType:
     Type: String
     Description: EC2 instance type for Image Builder
@@ -536,8 +535,7 @@ Resources:
                   commands:
                     - |
                       # $WORKING_DIRECTORY is an environment variable defined by EC2 Image Builder
-                      # TAG_SPECIFICATION_FILE="{{ TagSpecificationsFilePath }}"
-                      TAG_SPECIFICATION_FILE="/tag_specification.json"
+                      TAG_SPECIFICATION_FILE="{{ TagSpecificationsFilePath }}"
                       PCR_MEASUREMENTS_FILE="$WORKING_DIRECTORY/pcr_measurements.json"
 
                       if [ -f "$PCR_MEASUREMENTS_FILE" ]; then
@@ -740,10 +738,10 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-ImageBuilderExecutionRoleArn"
   ImageWorkflowArn:
-    Value: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:workflow/build/${ResourceNamePrefix}-build-image-with-coldsnap/x.x.x"
+    Value: !GetAtt ImageWorkflow.LatestVersion.Arn
     Export:
       Name: !Sub "${AWS::StackName}-ImageWorkflowArn"
   KiwiNgComponentArn:
-    Value: !Sub "arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:component/${ResourceNamePrefix}-invoke-kiwi-ng/x.x.x"
+    Value: !GetAtt KiwiNgComponent.LatestVersion.Arn
     Export:
       Name: !Sub "${AWS::StackName}-KiwiNgComponentArn"
