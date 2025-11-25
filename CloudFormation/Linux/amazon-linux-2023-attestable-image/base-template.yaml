@@ -58,6 +58,7 @@ Parameters:
     Type: String
     Description: Image Builder Resource Version
     Default: "1.0.0"
+    AllowedPattern: ^[0-9]+\.[0-9]+\.[0-9]+$
   InstanceType:
     Type: String
     Description: EC2 instance type for Image Builder
