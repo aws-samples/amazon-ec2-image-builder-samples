@@ -4,10 +4,10 @@ This folder contains sample code that demonstrates how to create Amazon EC2 Imag
 
 ## Requirements
 
-- Node v14.0.0 or above
-- Npm 6.14.0 or above
-- Docker 20.0.0 or above
-- CDK 2.0.0 or above
+- Node v20.0.0 or above
+- Npm 10.0.0 or above
+- Docker 20.0.0 or above (or Amazon Finch)
+- CDK 2.234.1 or above
 - AWS account need to be bootstrapped by following the steps in the [CDK Bootstrapping](https://docs.aws.amazon.com/cdk/v2/guide/bootstrapping.html) guide.
 
 ## System Configuration
@@ -47,9 +47,9 @@ Note: by default the builder instance will be terminated regardless the executio
 
 To update the parent image in Imaging building pipeline definition, it can be done by updating the value of the configuration key `ImageBuilderPipelineConfigurations/parentImage`. Please note that this key is a map with multiple AMI ids for different regions. The same AMI image could have different AMI IDs in different regions, please make sure to update the new AMI IDs for all regions or only specific region depends on your needs.
 
-The follow configuration snippet shows the update of parent AMI to `ami-123` for region `ap-southeast-2`
+The follow configuration snippet shows the update of parent AMI to `arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12` for region `ap-southeast-2`
 
-The latest AMI IDs can be found from [Find a Linux AMI](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami.html)
+The latest AMI IDs can be found from [Find a Linux AMI](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami.html) or by using AWS Image Builder managed images.
 
 ```
 "ImageBuilderPipelineConfigurations": [
@@ -61,7 +61,7 @@ The latest AMI IDs can be found from [Find a Linux AMI](https://docs.aws.amazon.
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.0",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "ami-123" },
+              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
                 ...
           }
       }
@@ -84,12 +84,12 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
           "cfnImageRecipeName": "standalone-testrecipe02",
           "version": "1.0.7",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "ami-0b7dcd6e6fd797935" },
-              "ap-southeast-1": { "amiID": "ami-055d15d9cfddf7bd3" },
-              "us-east-1": { "amiID": "ami-04505e74c0741db8d" },
-              "us-east-2": { "amiID": "ami-0fb653ca2d3203ac1" },
-              "us-west-1": { "amiID": "ami-01f87c43e618bf8f0" },
-              "us-west-2": { "amiID": "ami-0892d3c7ee96c0bf7" }
+              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" }
           }
       },
       <!-- new pipeline configuration -->
@@ -104,12 +104,12 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.0",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "ami-0b7dcd6e6fd797935" },
-              "ap-southeast-1": { "amiID": "ami-055d15d9cfddf7bd3" },
-              "us-east-1": { "amiID": "ami-04505e74c0741db8d" },
-              "us-east-2": { "amiID": "ami-0fb653ca2d3203ac1" },
-              "us-west-1": { "amiID": "ami-01f87c43e618bf8f0" },
-              "us-west-2": { "amiID": "ami-0892d3c7ee96c0bf7" }
+              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" }
           }
       }
   ]
