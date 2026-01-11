@@ -183,7 +183,7 @@ export class AWSImageBuilderConstruct extends Construct {
     );
     const imagebuilderCr = new PythonFunction(this, 'imagebuilderCr', {
       entry: 'lib/lambda/imagebuilder',
-      runtime: Runtime.PYTHON_3_8,
+      runtime: Runtime.PYTHON_3_12,
       index: 'app.py',
       handler: 'lambda_handler',
       environment: {
@@ -223,7 +223,7 @@ export class AWSImageBuilderConstruct extends Construct {
     });
     const amiIdRecorder = new PythonFunction(this, 'imageRecorder', {
       entry: 'lib/lambda/recorder',
-      runtime: Runtime.PYTHON_3_8,
+      runtime: Runtime.PYTHON_3_12,
       index: 'app.py',
       handler: 'lambda_handler',
       environment: {
