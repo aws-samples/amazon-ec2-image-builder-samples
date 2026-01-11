@@ -61,7 +61,7 @@ The latest AMI IDs can be found from [Find a Linux AMI](https://docs.aws.amazon.
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.0",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
+              "ap-southeast-2": { "amiID": "ami-123" },
                 ...
           }
       }
