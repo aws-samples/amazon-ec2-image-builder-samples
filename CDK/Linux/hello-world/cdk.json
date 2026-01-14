@@ -5,10 +5,13 @@
     "ImageBuilderPipelineConfigurations": [
       {
         "name": "imagebuilder-example",
-        "components": ["example-component"],
+        "components": [
+          "arn:aws:imagebuilder:us-west-2:aws:component/update-linux/1.0.2",
+          "example-component"
+        ],
         "instanceProfileName": "ImageBuilderInstanceProfile",
         "cfnImageRecipeName": "imagebuilder-example-recipe",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "parentImage": {
           "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
           "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
