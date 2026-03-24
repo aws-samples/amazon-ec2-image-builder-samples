@@ -12,6 +12,8 @@ The ```CloudFormation``` folder contains sample EC2 Image Builder CloudFormation
 
 The ```CDK``` folder contains sample EC2 Image Builder Cloud Development Kit. These samples demonstrate how to deploy EC2 Image Builder infrastructure to AWS accounts using Cloud Development Kit.
 
+- [accelerated-build-asg](CDK/Linux/accelerated-build-asg/) — CDK TypeScript application that provisions an accelerated EC2 Image Builder pipeline. Build instances are pre-warmed in an Auto Scaling Group, eliminating cold-start launch time.
+
 ### Components
 
 The ```Components``` folder contains sample Image Builder components. The samples demonstrate how certain features of the component management application work, or how to execute certain workflows, such as invoking ```ansible-playbook``` or ```chef-client``` within a component.
