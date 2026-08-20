@@ -7,7 +7,7 @@ body:
     id: sample
     attributes:
       label: Sample
-      description: Path to the sample, e.g. CloudFormation/Linux/amazon-linux-2-with-latest-ssm-agent
+      description: Path to the sample, e.g. CloudFormation/install-latest-ssm-agent
     validations:
       required: true
   - type: textarea
