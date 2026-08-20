@@ -69,9 +69,9 @@ phases:
         maxAttempts: 3
         inputs:
           - source: /tmp/inspec_test/reports/*
-            destination: s3://<S3_PATH_TO_INSPEC_REPORT_LOCATION>'
+            destination: 's3://<S3_PATH_TO_INSPEC_REPORT_LOCATION>'
       - name: Cleanup
-        action: DeleteFile
+        action: DeleteFolder
         inputs:
           - path: '/tmp/inspec_test/'
             force: true

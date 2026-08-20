@@ -1,5 +1,7 @@
 # Chef Inspec Execution on Windows
 
+> **Note:** Progress (Chef) now requires a license to download InSpec - unlicensed downloads fail with `License validation failed`. To use this component you need licensed access to an InSpec package. For license-free compliance validation in the test phase, consider the AWS managed [SCAP compliance checker component](https://docs.aws.amazon.com/imagebuilder/latest/userguide/ib-stig.html#scap-compliance) or [Inspector-based image scanning](https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-security-findings.html).
+
 This is a sample component that demonstrates how to download and execute a Chef Inspec recipe against a Windows 2016 server. This document downloads the Chef InSpec installer from Amazon S3 and installs it. It then downloads the test cases from Amazon S3 and performs the tests. After running the test cases, it returns the exit code of the process and uploads the test report to Amazon S3. The Image Builder pipeline either progresses or fails based on the value of the exit code. 
 
 For more information on Chef Inspec, visit [https://docs.chef.io/inspec/](https://docs.chef.io/inspec/)

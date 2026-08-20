@@ -22,7 +22,7 @@ Parameters:
   BuildInstanceType:
     Type: CommaDelimitedList
     Default: 'c5.xlarge'
-    Description: Comma-delimited list of one or more instance types to select from when building the image. Image Builder will select a type based on availability. The supplied default is compatible with the AWS Free Tier.
+    Description: Comma-delimited list of one or more instance types to select from when building the image. Image Builder will select a type based on availability. Windows container builds need a larger instance type - the default is not covered by the AWS Free Tier, so the build instance bills at standard EC2 rates while it runs.
 
   TargetECRRepository:
     Description: Name of the target ECR repository to push container image to
@@ -46,13 +46,14 @@ Parameters:
 
   DotnetSourceZipFile:
     Type: String
-    Default: https://github.com/genericinternetcompany/windows-webapp/releases/download/1.0.0/windows-webapp.zip
-    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+    AllowedPattern: '^https://.+'
+    ConstraintDescription: Must be an HTTPS URL to a zip file you control - there is no default
+    Description: An HTTPS URL to a zip file containing a .NET web application, downloaded onto the build instance with WebDownload. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
 
   DotnetSDKBinaryURL:
     Type: String
     Default: https://download.visualstudio.microsoft.com/download/pr/89f0ba2a-5879-417b-ba1d-debbb2bde208/b22a9e9e4d513e4d409d2222315d536b/dotnet-sdk-6.0.200-win-x64.exe
-    Description: An S3 URI to a exe file containing a .NET SDK
+    Description: An HTTPS URL to the .NET SDK installer exe. The default points at a .NET 6 SDK installer - .NET 6 went out of support in November 2024, so replace it with a current SDK for anything beyond a demo.
 
   WebsiteName:
     Type: String
@@ -62,7 +63,7 @@ Parameters:
   ApplicationPort:
     Type: String
     Default: '5000'
-    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+    Description: The TCP port the .NET web application listens on inside the container.
 
 Conditions:
   UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
@@ -174,8 +175,7 @@ Resources:
       # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
       # security groups to be associated with the build instance.
       SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
-      SecurityGroupIds:
-        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds: !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
 
   # This component will download the .NET web application from the provided S3 URI. The application will
   # be extracted to disk and the execute bit set on the application.

@@ -122,8 +122,7 @@ Resources:
       # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
       # security groups to be associated with the build instance.
       SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
-      SecurityGroupIds:
-        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds: !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
       Tags:
         Purpose: ImageBuilderSample
 
@@ -137,7 +136,7 @@ Resources:
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-windows/x.x.x'
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-windows/x.x.x'
-        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/powershell-windows/x.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/powershell-lts-windows/x.x.x'
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/windows-activation-test/x.x.x'
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-test-windows/x.x.x'
       ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-english-full-base-x86/x.x.x'
@@ -241,7 +240,7 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: arn:aws:logs:*:*
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*'
 
   # Invokes the Lambda Function to ensure a lowercase resource name is available.
   LowerCaseImageName:

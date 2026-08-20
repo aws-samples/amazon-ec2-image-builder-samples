@@ -142,8 +142,7 @@ Resources:
       # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
       # security groups to be associated with the build instance.
       SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref "AWS::NoValue" ]
-      SecurityGroupIds:
-        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
+      SecurityGroupIds: !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref "AWS::NoValue" ]
 
   # Create a sample "Hello World" component doc that demonstrates defining the build, validation,
   # and test phases for an image build lifecycle. The component includes a validation step which will run
