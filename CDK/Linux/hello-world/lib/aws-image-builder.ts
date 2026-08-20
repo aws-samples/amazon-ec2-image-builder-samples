@@ -122,7 +122,7 @@ export class AWSImageBuilderConstruct extends Construct {
       `imageBuilderProfile${props.name}`,
       {
         roles: [imageBuilderRole.roleName],
-        instanceProfileName: `${props.instanceProfileName}-${Aws.REGION}`,
+        instanceProfileName: `${props.instanceProfileName}-${props.name}-${Aws.REGION}`,
       }
     );
     const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {});
@@ -133,8 +133,8 @@ export class AWSImageBuilderConstruct extends Construct {
       this,
       `cfnInfrastructureConfiguration${props.name}`,
       {
-        name: 'infraConfiguration',
-        instanceProfileName: `${props.instanceProfileName}-${Aws.REGION}`,
+        name: `infraConfiguration-${props.name}`,
+        instanceProfileName: instanceProfile.ref,
         instanceTypes: instanceTypes,
         subnetId: props.subnetId,
         securityGroupIds: [props.imageBuilderSG.securityGroupId],
@@ -147,7 +147,7 @@ export class AWSImageBuilderConstruct extends Construct {
       componentArn:
         component.managedComponentArn ??
         new CfnComponent(this, `${component.name}`, {
-          name: `${component.name}`,
+          name: `${component.name}-${props.name}`,
           platform: os_types.LINUX,
           version: props.version,
           data: `${component.data}`,
@@ -195,10 +195,10 @@ export class AWSImageBuilderConstruct extends Construct {
           effect: Effect.ALLOW,
           actions: ['imagebuilder:StartImagePipelineExecution'],
           resources: [
-            `arn:aws:imagebuilder:${Stack.of(this).region}:${
+            `arn:${Aws.PARTITION}:imagebuilder:${Stack.of(this).region}:${
               Stack.of(this).account
             }:image/*`,
-            `arn:aws:imagebuilder:${Stack.of(this).region}:${
+            `arn:${Aws.PARTITION}:imagebuilder:${Stack.of(this).region}:${
               Stack.of(this).account
             }:image-pipeline/*`,
           ],
@@ -216,9 +216,7 @@ export class AWSImageBuilderConstruct extends Construct {
     new CustomResource(this, id, {
       serviceToken: pipelineTriggerCrProvider.serviceToken,
       properties: {
-        PIIPELINE_ARN: `arn:aws:imagebuilder:${Stack.of(this).region}:${
-          Stack.of(this).account
-        }:image-pipeline/${cfnImageBuilderPipeline.name.toLowerCase()}`,
+        PIPELINE_ARN: cfnImageBuilderPipeline.attrArn,
       },
     });
     const amiIdRecorder = new PythonFunction(this, 'imageRecorder', {
