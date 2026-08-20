@@ -1,3 +1,6 @@
 .DS_Store
 .aws-sam
 samconfig.toml
+__pycache__/
+*.pyc
+cdk.out/
