@@ -4,7 +4,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Ubuntu 18.04 container image to host
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Ubuntu 22.04 container image to host
   a .NET web application, and publishes the image to the an Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is
   scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day. The build will only run if dependent resources have been updated.
 
@@ -46,18 +46,19 @@ Parameters:
 
   DotnetS3SourceTarFile:
     Type: String
-    Default: s3://awspearca-demo-us-west-2/powershell-summit-2021/hello-powershell-summit-ubuntu.tar.gz
-    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+    AllowedPattern: '^s3://[a-z0-9][a-z0-9.-]*/.+'
+    ConstraintDescription: Must be a valid S3 URI (s3://bucket-name/key) pointing to your uploaded .tar.gz - replace any placeholder text
+    Description: An S3 URI to a .tar.gz file containing a .NET web application that you have uploaded to your own bucket (see the README walkthrough). The web application must have been published for a Linux runtime. For example, `dotnet publish --configuration release -r linux-x64 --self-contained`
 
   DotnetBinaryName:
     Type: String
-    Default: 'hello-powershell-summit'
-    Description: The .NET binary file to execute. This file must exist within the root of the zip file referenced in `DotnetS3SourceTarFile`.
+    Default: 'sample-web-application'
+    Description: The .NET binary file to execute. This file must exist within the root of the .tar.gz file referenced in `DotnetS3SourceTarFile`.
 
   WebsiteName:
     Type: String
     Default: 'DotnetWebsiteDemo'
-    Description: The website name. This is used for local folder paths on the image, and is used for the Windows Service.
+    Description: The website name. This is used for local folder paths within the container image.
 
 Conditions:
   UseCustomSubnetId: !Not [ !Equals [ !Ref CustomSubnetId, "" ] ]
@@ -171,8 +172,7 @@ Resources:
       # If you do not have a default VPC or want to use a different VPC, you must specify the IDs of a subnet and one or more
       # security groups to be associated with the build instance.
       SubnetId: !If [ UseCustomSubnetId, !Ref CustomSubnetId , !Ref 'AWS::NoValue' ]
-      SecurityGroupIds:
-        - !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
+      SecurityGroupIds: !If [ UseCustomSubnetId, !Ref CustomSecurityGroupId , !Ref 'AWS::NoValue' ]
 
   # This component will download the .NET web application from the provided S3 URI. The application will
   # be extracted to disk and the execute bit set on the application.
@@ -237,7 +237,7 @@ Resources:
                 inputs:
                   - path: '/{{ WebsiteName }}/{{ build.TarFileName.outputs.stdout }}'
 
-  # Recipe which references the `ubuntu-18-x86-18-04` parent image. This also includes component references
+  # Recipe for the Ubuntu container image. This also includes component references
   # to ensure the container is updated, and installed the .NET runtime and the custom component.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-containerrecipe.html
   Recipe:
@@ -245,13 +245,14 @@ Resources:
     Properties:
       Name: !Ref ResourceName
       Version: !Ref ResourceVersion
-      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-18-x86-18-04/x.x.x'
+      # Docker Hub base image
+      ParentImage: ubuntu:22.04
       # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom
       # via the "PlatformOverride" property.
       ContainerType: DOCKER
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
-        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/dotnet-runtime-linux/5.x.x'
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/dotnet-runtime-lts-linux/x.x.x'
         - ComponentArn: !Ref Component
       TargetRepository:
         Service: ECR

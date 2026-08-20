@@ -1,0 +1,40 @@
+---
+name: Bug report
+description: A sample doesn't deploy, build, or clean up the way its README says.
+labels: [bug]
+body:
+  - type: input
+    id: sample
+    attributes:
+      label: Sample
+      description: Path to the sample, e.g. CloudFormation/Linux/amazon-linux-2-with-latest-ssm-agent
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what did you expect instead? Paste the exact error message - most Image Builder issues are diagnosed from the error string.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Deployed the template with default parameters in us-east-1
+        2. Ran the pipeline
+        3. Build failed at ExecuteComponents with ...
+    validations:
+      required: true
+  - type: input
+    id: region
+    attributes:
+      label: Region
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything non-default about your setup
+      description: Custom VPC / no default VPC, custom parameters, GovCloud or China partition, org SCPs - anything that differs from the README walkthrough.

@@ -1,5 +1,9 @@
 # Windows Server 2019 Container Image Pipeline for hosting a .NET web application
 
+> **Note:** This sample installs a .NET 6 SDK (out of support since November 2024) on a Windows Server 2019 base. If you're building on this today, point `DotnetSDKBinaryURL` at a current SDK and consider a newer base image.
+
+`DotnetSourceZipFile` has no default - build and publish your own application zip (see the walkthrough below), then pass an HTTPS URL you control when deploying the stack. Don't point production builds at zip files from accounts you don't own.
+
 This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build a Windows Server 2019 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
 
 ***Internet connectivity is required in your default VPC*** to pull the source image by digest from a Docker Hub repository. If you do not have a default VPC, or want to use a custom VPC, you will need to specify a subnet ID and one or more security group IDs in the VPC as parameters when you create a stack based on this template.
@@ -105,6 +109,6 @@ If the stack fails, check the CloudFormation events. These events include a desc
 
 To delete the resources created by the stack:
 
-1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html) for more information.
+1. Delete the contents of the S3 bucket created by the stack, including all object versions and delete markers - the bucket has versioning enabled, so `aws s3 rm --recursive` alone leaves versions behind and the stack deletion fails on a non-empty bucket. The console's "Empty bucket" action removes versions for you. To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html) for more information.
 2. Delete the container image within your ECR repository created by the stack (if the repository is not empty, the stack deletion will fail).
 3. Delete the stack in the CloudFormation console, or by using the CLI/SDK.

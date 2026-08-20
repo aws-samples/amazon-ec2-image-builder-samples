@@ -1,0 +1,128 @@
+---
+# Lints the files a pull request actually touches. Each job diffs against the
+# merge base, so an unrelated stale sample won't block your PR.
+name: Lint changed files
+
+on:
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  cfn-lint:
+    name: cfn-lint changed templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Find changed CloudFormation templates
+        id: changed
+        run: |
+          # Select by content: CFN templates also live under Components/
+          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            | grep -zE '\.(yml|yaml|template)$' \
+            | sed -z 's|^|./|' \
+            | xargs -0 -r grep -lE '^(AWSTemplateFormatVersion|Resources):' > changed.txt || true
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          cat changed.txt
+      - name: Run cfn-lint
+        if: steps.changed.outputs.count != '0'
+        run: |
+          pip install cfn-lint==1.55.1
+          xargs -a changed.txt cfn-lint --non-zero-exit-code error
+
+  # awstoe validates a document against the action modules of the OS it runs
+  # on, so Windows components (ExecutePowerShell and friends) fail on a Linux
+  # runner. Components/Windows/ documents get the Windows binary on a Windows
+  # runner; everything else runs on Linux.
+  awstoe-validate:
+    name: awstoe validate changed components
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Find changed component documents
+        id: changed
+        run: |
+          # AWSTOE documents are identified by their top-level schemaVersion key,
+          # regardless of directory - the same tree also holds CFN templates and
+          # Ansible playbooks, which awstoe rejects
+          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            | grep -zE '\.(yml|yaml)$' \
+            | grep -zv '^Components/Windows/' \
+            | sed -z 's|^|./|' \
+            | xargs -0 -r grep -l '^schemaVersion:' > changed.txt || true
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          cat changed.txt
+      - name: Validate with awstoe
+        if: steps.changed.outputs.count != '0'
+        run: |
+          # awstoe is the engine that runs components on build instances
+          curl -sSf -o awstoe https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe
+          chmod +x awstoe
+          failed=0
+          while read -r doc; do
+            echo "::group::$doc"
+            ./awstoe validate --documents "$doc" || failed=1
+            echo "::endgroup::"
+          done < changed.txt
+          exit "$failed"
+
+  awstoe-validate-windows:
+    name: awstoe validate changed Windows components
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Find changed Windows component documents
+        id: changed
+        shell: bash
+        run: |
+          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            | grep -zE '\.(yml|yaml)$' \
+            | grep -z '^Components/Windows/' \
+            | sed -z 's|^|./|' \
+            | xargs -0 -r grep -l '^schemaVersion:' > changed.txt || true
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          cat changed.txt
+      - name: Validate with awstoe
+        if: steps.changed.outputs.count != '0'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/windows/amd64/awstoe.exe -OutFile awstoe.exe
+          $sig = Get-AuthenticodeSignature .\awstoe.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*Amazon*') {
+            throw "awstoe.exe signature check failed: $($sig.Status)"
+          }
+          $failed = 0
+          foreach ($doc in Get-Content changed.txt) {
+            Write-Output "::group::$doc"
+            .\awstoe.exe validate --documents "$doc"
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+            Write-Output "::endgroup::"
+          }
+          exit $failed
+
+  params-parse:
+    name: JSON parameter files parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Parse changed JSON files
+        run: |
+          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            | grep -zE '\.json$' | grep -zv package-lock | tr '\0' '\n' > changed.txt || true
+          failed=0
+          while read -r f; do
+            echo "checking $f"
+            python3 -m json.tool "./$f" > /dev/null || failed=1
+          done < changed.txt
+          exit "$failed"
+

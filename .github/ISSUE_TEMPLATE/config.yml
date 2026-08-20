@@ -1,0 +1,12 @@
+---
+blank_issues_enabled: true
+contact_links:
+  - name: EC2 Image Builder feature requests and service issues
+    url: https://github.com/aws/ec2-image-builder-roadmap
+    about: Feature requests and service-level bugs belong on the public roadmap repo, where the service team triages them. This repo can only act on issues with the samples themselves.
+  - name: EC2 Image Builder service questions
+    url: https://repost.aws/tags/TAZtkgNAX7Q9OYs3rXXBxVlw/ec2-image-builder
+    about: For how-do-I questions about the service, AWS re:Post is the right place.
+  - name: EC2 Image Builder documentation
+    url: https://docs.aws.amazon.com/imagebuilder/latest/userguide/what-is-image-builder.html
+    about: The EC2 Image Builder User Guide.

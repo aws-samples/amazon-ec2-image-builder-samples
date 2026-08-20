@@ -1,0 +1,28 @@
+---
+name: Sample proposal
+description: Suggest a new sample or an improvement to an existing one.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this sample solve
+      description: Describe the situation where you needed a working example and couldn't find one. Links to re:Post / Stack Overflow questions showing others hit the same wall help us prioritize.
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What the sample would contain
+      description: The Image Builder features involved, and the format you'd expect (CloudFormation, CDK, component document, workflow document, script).
+    validations:
+      required: true
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Would you be willing to contribute it?
+      options:
+        - "Yes, I'd open a PR"
+        - "No, just proposing the idea"
+    validations:
+      required: true

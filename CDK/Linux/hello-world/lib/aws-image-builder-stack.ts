@@ -1,7 +1,7 @@
 import { Annotations, Stack, StackProps } from 'aws-cdk-lib';
 import { IVpc, SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { IBucket } from 'aws-cdk-lib/aws-s3';
-import { ParameterTier, StringParameter } from 'aws-cdk-lib/aws-ssm';
+import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { existsSync, readdirSync, readFileSync, lstatSync } from 'fs';
 import * as path from 'path';
@@ -60,12 +60,15 @@ export class ImageBuilderStack extends Stack {
     // get component list
     const componentList = this.parseComponentList(imageBuilderPipeline.components);
 
-    const amiIdSSMParameter = new StringParameter(this, 'amiIDSSMParameter', {
-      description: `The id of the ec2 AMI image that is built by image builder pipeline ${imageBuilderPipeline.name}`,
-      parameterName: `imagebuilder_ami_${imageBuilderPipeline.name}`,
-      stringValue: 'n/a',
-      tier: ParameterTier.ADVANCED,
-    });
+    const amiIdSSMParameter = new StringParameter(
+      this,
+      `amiIDSSMParameter${imageBuilderPipeline.name}`,
+      {
+        description: `The id of the ec2 AMI image that is built by image builder pipeline ${imageBuilderPipeline.name}`,
+        parameterName: `imagebuilder_ami_${imageBuilderPipeline.name}`,
+        stringValue: 'n/a',
+      }
+    );
 
     new AWSImageBuilderConstruct(
       this,

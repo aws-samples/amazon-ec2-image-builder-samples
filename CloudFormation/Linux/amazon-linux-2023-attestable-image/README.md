@@ -219,7 +219,7 @@ To use the sample recipe, deploy the pipeline template without specifying a `Rec
 ## Stack Management
 
 ### Cleanup
-When deleting the base stack, empty the S3 log bucket first:
+When deleting the base stack, empty the S3 log bucket first, including all object versions and delete markers (the bucket has versioning enabled):
 
 ```bash
 aws s3 rm s3://your-log-bucket-name --recursive

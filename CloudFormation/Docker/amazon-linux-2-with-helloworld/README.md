@@ -59,6 +59,6 @@ If the stack fails, check the CloudFormation events. These events include a desc
 
 To delete the resources created by the stack:
 
-1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html for more information on ```DeletionPolicy``` attributes.
+1. Delete the contents of the S3 bucket created by the stack, including all object versions and delete markers - the bucket has versioning enabled, so `aws s3 rm --recursive` alone leaves versions behind and the stack deletion fails on a non-empty bucket. The console's "Empty bucket" action removes versions for you. To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html for more information on ```DeletionPolicy``` attributes.
 2. Delete the container image within your ECR repository created by the stack (if the repo is not empty, the stack deletion will fail).
 3. Delete the stack in the CloudFormation console, or by using the CLI/SDK.

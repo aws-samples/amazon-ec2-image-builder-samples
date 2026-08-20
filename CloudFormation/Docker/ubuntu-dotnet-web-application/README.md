@@ -1,6 +1,10 @@
-# Ubuntu 18.04 Container Image Pipeline for hosting a .NET web application
+# Ubuntu Container Image Pipeline for hosting a .NET web application
 
-This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build an Ubuntu 18.04 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
+> **Note:** The walkthrough below still shows .NET 5 commands, and .NET 5 is past end of support - substitute a current .NET version when you build your application.
+
+This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build an Ubuntu 22.04 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
+
+The `DotnetS3SourceTarFile` parameter has no default - build and upload your own .NET web application to an S3 bucket you own first (see the walkthrough below), then pass its S3 URI when deploying the stack.
 
 ***Internet connectivity is required in your default VPC*** to pull the source image by digest from a Docker Hub repository. If you do not have a default VPC, or want to use a custom VPC, you will need to specify a subnet ID and one or more security group IDs in the VPC as parameters when you create a stack based on this template.
 
@@ -20,7 +24,7 @@ Next, the stack will create an [AWS::ECR::Repository](https://docs.aws.amazon.co
 
 The [AWS::ImageBuilder::Component](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html) will download the compressed .NET web application from S3, and install it in the Docker image ready for use.
 
-The [AWS::ImageBuilder::ContainerRecipe](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-containerrecipe.html) ties together the Ubuntu 18.04 parent image, the .NET runtime, and the custom component. This example demonstrates using the Dockerfile template default settings, which provides variables for your parent image, environments, and components. These variables will be replaced with Image Builder generated scripts at build time.
+The [AWS::ImageBuilder::ContainerRecipe](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-containerrecipe.html) ties together the Ubuntu parent image, the .NET runtime, and the custom component. This example demonstrates using the Dockerfile template default settings, which provides variables for your parent image, environments, and components. These variables will be replaced with Image Builder generated scripts at build time.
 
 The resource [AWS::ImageBuilder::DistributionConfiguration](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html) allows you to specify the name and description of your output container image and settings for tagging and sharing to a target ECR repository in a specific region.
 
@@ -36,7 +40,7 @@ Before deploying the stack, a .NET web application must first be created and upl
 
 ### Creating the .NET web application
 
-First, install the latest .NET SDK from the [Download .NET 5.0](https://dotnet.microsoft.com/download/dotnet/5.0) website.
+First, install the latest .NET SDK from the [Download .NET](https://dotnet.microsoft.com/download) website.
 
 Next, create a .NET web application. As this is a sample, we will not be using https, although that is recommended for production use.
 
@@ -57,16 +61,16 @@ In the `Program.cs` file, add ```webBuilder.UseUrls("http://*:5000");``` after t
                 });
 ```
 
-Next, the .NET application needs to be compiled for Ubuntu 18.04.
+Next, the .NET application needs to be compiled for Linux.
 
 ```shell
-dotnet publish --configuration release -r ubuntu.18.04-x64 --self-contained
+dotnet publish --configuration release -r linux-x64 --self-contained
 ```
 
-The compiled application should exist in the ```./bin/release/net5.0/ubuntu.18.04-x64/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.tar.gz``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.
+The compiled application should exist in the ```./bin/release/<framework>/linux-x64/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.tar.gz``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.
 
 ```shell
-cd bin/release/net5.0/ubuntu.18.04-x64/publish
+cd bin/release/<framework>/linux-x64/publish
 tar -czf ~/sample-web-application.tar.gz .
 aws s3 cp sample-web-application.tar.gz s3://< Insert your bucket name here >/sample-web-application.tar.gz
 ```
@@ -112,6 +116,6 @@ If the stack fails, check the CloudFormation events. These events include a desc
 
 To delete the resources created by the stack:
 
-1. Delete the contents of the S3 bucket created by the stack (if the bucket is not empty, the stack deletion will fail). To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html) for more information.
+1. Delete the contents of the S3 bucket created by the stack, including all object versions and delete markers - the bucket has versioning enabled, so `aws s3 rm --recursive` alone leaves versions behind and the stack deletion fails on a non-empty bucket. The console's "Empty bucket" action removes versions for you. To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html) for more information.
 2. Delete the container image within your ECR repository created by the stack (if the repository is not empty, the stack deletion will fail).
 3. Delete the stack in the CloudFormation console, or by using the CLI/SDK.

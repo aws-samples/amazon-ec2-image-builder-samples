@@ -28,7 +28,6 @@ def lambda_handler(event, _):
             Value=ami,
             Type="String",
             DataType="text",
-            Tier="Advanced",
             Overwrite=True,
         )
         logger.info(result)
