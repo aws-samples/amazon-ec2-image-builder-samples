@@ -1,0 +1,154 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder sample: build an Amazon Linux 2023 image whose build instance runs the
+  latest Amazon SSM Agent, installed through the recipe's UserDataOverride before
+  the build starts. The resulting image ID is published to an SSM parameter.
+
+Resources:
+  # S3 bucket for build logs. The bucket has versioning enabled - to delete the
+  # stack, remove all object versions and delete markers first.
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # To keep the bucket when deleting the stack, set DeletionPolicy: Retain.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Build logs are only useful for recent troubleshooting - expire them
+          # so the bucket doesn't accumulate cost or block cleanup
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+
+  # The build instance profile. The two managed policies are the supported
+  # baseline for Image Builder build instances; the inline statement adds
+  # write access to the logging bucket, which the managed policies don't know about.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'ec2.${AWS::URLSuffix}'
+      Path: /executionServiceEC2Role/
+
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - !Ref InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Without this, builds still succeed but no logs reach the bucket.
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: install-latest-ssm-agent-al2023
+      InstanceProfileName: !Ref InstanceProfile
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+      # To keep the instance running after a failed build for debugging:
+      # TerminateInstanceOnFailure: false
+      # Without a default VPC, or to use a different VPC, set a subnet and the
+      # security groups to use with it:
+      # SubnetId: subnet-...
+      # SecurityGroupIds: [sg-...]
+
+  # Pre-creating the log group lets the stack own its retention and cleanup.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/AmazonLinux2023WithLatestSsmAgent
+      RetentionInDays: 7
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: AmazonLinux2023WithLatestSsmAgent
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair
+      Version: 1.0.x
+      # x.x.x resolves to the latest version of the managed parent image at
+      # build time, so each build starts from the current base release.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      # A recipe needs at least one component. AL2023 takes OS updates by
+      # consuming the latest base AMI release (the x.x.x parent reference
+      # above), so there's no update step to run - the no-op hello-world
+      # component fills the slot.
+      Components:
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/hello-world-linux/x.x.x'
+      AdditionalInstanceConfiguration:
+        # UserDataOverride replaces the user data Image Builder normally supplies,
+        # so this runs before the SSM Agent connects - the one window where you
+        # can change the agent itself.
+        UserDataOverride:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              dnf install -y https://amazon-ssm-${AWS::Region}.s3.${AWS::Region}.${AWS::URLSuffix}/latest/linux_amd64/amazon-ssm-agent.rpm
+
+  # AWS::ImageBuilder::Image builds once at stack-create time and completes in
+  # CloudFormation only when the image is AVAILABLE (typically 15 to 30 minutes).
+  Image:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+
+  # Publishes the resulting image ID to an SSM parameter for downstream
+  # consumers (launch templates, other stacks). The /imagebuilder/ parameter
+  # path matters: the service writes it through its service-linked role, whose
+  # ssm:PutParameter permission is scoped to that path. The parameter is
+  # service-managed rather than a stack resource, so deleting the stack
+  # doesn't delete it - the cleanup steps in the README do.
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: install-latest-ssm-agent-al2023
+      Distributions:
+        - Region: !Ref AWS::Region
+          SsmParameterConfigurations:
+            - ParameterName: /imagebuilder/samples/al2023-latest-ssm-agent
+              DataType: aws:ec2:image
