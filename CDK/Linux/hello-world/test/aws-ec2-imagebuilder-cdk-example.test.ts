@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { ImageBuilderStack } from '../lib/aws-image-builder-stack';
 
 test('test stack can be built', () => {
@@ -9,12 +9,13 @@ test('test stack can be built', () => {
       {
         name: 'sampleimg',
         components: [
+          'update-linux/x.x.x',
           'arn:aws:imagebuilder:ap-southeast-2:aws:component/test-component/1.0.0/1',
           'image-builder-components',
         ],
         instanceProfileName: 'ImageBuilderInstanceProfile',
         cfnImageRecipeName: 'standalone-testrecipe02',
-        version: '1.0.6',
+        version: '1.0.x',
         parentImage: {
           'ap-southeast-2': { amiID: 'ami-0b7dcd6e6fd797935' },
           'ap-southeast-1': { amiID: 'ami-055d15d9cfddf7bd3' },
@@ -39,8 +40,107 @@ test('test stack can be built', () => {
   });
 
   const template = Template.fromStack(stack);
-  console.log(template.toJSON());
   template.resourceCountIs('AWS::ImageBuilder::ImagePipeline', 1);
+  // The output AMI ID is published through the distribution configuration's
+  // SSM parameter configuration, not a stack-owned parameter, and builds
+  // only run when runPipelineOnDeploy asks for them.
+  template.resourceCountIs('AWS::SSM::Parameter', 0);
+  template.resourceCountIs('AWS::ImageBuilder::Image', 0);
+  template.hasResourceProperties('AWS::ImageBuilder::DistributionConfiguration', {
+    Distributions: [
+      {
+        SsmParameterConfigurations: [
+          { ParameterName: '/imagebuilder/sampleimg/latest-ami', DataType: 'aws:ec2:image' },
+        ],
+      },
+    ],
+  });
+  // A name/version reference becomes an ARN in the deployment region; a
+  // full ARN with a matching region is used exactly as written.
+  const recipe = Object.values(
+    template.findResources('AWS::ImageBuilder::ImageRecipe')
+  )[0] as any;
+  expect(JSON.stringify(recipe.Properties.Components[0])).toContain(
+    ':imagebuilder:ap-southeast-2:aws:component/update-linux/x.x.x'
+  );
+  expect(recipe.Properties.Components[1].ComponentArn).toBe(
+    'arn:aws:imagebuilder:ap-southeast-2:aws:component/test-component/1.0.0/1'
+  );
+});
+
+test('a managed component ARN outside the deployment region fails at synth', () => {
+  const context = {
+    ImageBuilderPipelineConfigurations: [
+      {
+        name: 'sampleimg',
+        components: [
+          'arn:aws:imagebuilder:us-west-2:aws:component/test-component/1.0.0/1',
+        ],
+        instanceProfileName: 'ImageBuilderInstanceProfile',
+        cfnImageRecipeName: 'standalone-testrecipe02',
+        version: '1.0.x',
+        parentImage: {
+          'ap-southeast-2': { amiID: 'ami-0b7dcd6e6fd797935' },
+        },
+      },
+    ],
+  };
+  const app = new cdk.App({ context });
+
+  const stack = new ImageBuilderStack(app, 'ImageBuilderStack', {
+    env: {
+      account: '123456789012',
+      region: 'ap-southeast-2',
+    },
+  });
+
+  // cdk synth and cdk deploy refuse to proceed when a stack carries an
+  // error-level annotation.
+  Annotations.fromStack(stack).hasError(
+    '*',
+    Match.stringLikeRegexp('.*us-west-2.*')
+  );
+});
+
+test('runPipelineOnDeploy adds an image that runs the pipeline', () => {
+  const context = {
+    ImageBuilderPipelineConfigurations: [
+      {
+        name: 'sampleimg',
+        components: [
+          'arn:aws:imagebuilder:ap-southeast-2:aws:component/test-component/1.0.0/1',
+          'image-builder-components',
+        ],
+        instanceProfileName: 'ImageBuilderInstanceProfile',
+        cfnImageRecipeName: 'standalone-testrecipe02',
+        version: '1.0.x',
+        runPipelineOnDeploy: true,
+        parentImage: {
+          'ap-southeast-2': { amiID: 'ami-0b7dcd6e6fd797935' },
+        },
+      },
+    ],
+  };
+  const app = new cdk.App({ context });
+
+  const stack = new ImageBuilderStack(app, 'ImageBuilderStack', {
+    env: {
+      account: '123456789012',
+      region: 'ap-southeast-2',
+    },
+  });
+
+  const template = Template.fromStack(stack);
+  const pipelineIds = Object.keys(
+    template.findResources('AWS::ImageBuilder::ImagePipeline')
+  );
+  expect(pipelineIds).toHaveLength(1);
+  template.hasResourceProperties('AWS::ImageBuilder::Image', {
+    ImagePipelineExecutionSettings: {
+      DeploymentId: { 'Fn::GetAtt': [pipelineIds[0], 'DeploymentId'] },
+      OnUpdate: true,
+    },
+  });
 });
 
 test('test stack can be built with multiple pipeline configurations', () => {
@@ -50,7 +150,7 @@ test('test stack can be built with multiple pipeline configurations', () => {
       'image-builder-components',
     ],
     instanceProfileName: 'ImageBuilderInstanceProfile',
-    version: '1.0.6',
+    version: '1.0.x',
     parentImage: {
       'ap-southeast-2': { amiID: 'ami-0b7dcd6e6fd797935' },
     },
@@ -80,7 +180,7 @@ test('test stack can be built with multiple pipeline configurations', () => {
 
   const template = Template.fromStack(stack);
   template.resourceCountIs('AWS::ImageBuilder::ImagePipeline', 2);
-  template.resourceCountIs('AWS::SSM::Parameter', 2);
+  template.resourceCountIs('AWS::ImageBuilder::DistributionConfiguration', 2);
   template.resourceCountIs('AWS::ImageBuilder::InfrastructureConfiguration', 2);
   template.resourceCountIs('AWS::IAM::InstanceProfile', 2);
 
