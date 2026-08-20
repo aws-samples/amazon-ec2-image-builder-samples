@@ -7,7 +7,7 @@
   connection: local
   tasks:
     - name: Install Apache
-      yum:
+      dnf:
         name: httpd
         state: latest
     - name: Create a default page

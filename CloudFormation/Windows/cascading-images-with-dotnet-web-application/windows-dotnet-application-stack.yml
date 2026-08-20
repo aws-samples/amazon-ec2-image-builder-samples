@@ -4,7 +4,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a Windows Server 2019 image running a .NET web application. The pipeline, by default, is scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a Windows Server 2025 image running a .NET web application. The pipeline, by default, is scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
 
 Parameters:
   CustomSubnetId:
@@ -24,12 +24,14 @@ Parameters:
 
   ResourceVersion:
     Type: String
-    Default: '1.0.0'
-    Description: The version to use for Image Builder resources
+    # x auto-increments the build version, so recipe replacements never
+    # collide with an existing name + version pair
+    Default: 1.0.x
+    Description: The version to use for the Image Builder recipe
 
   DotnetS3SourceZipFile:
     Type: String
-    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+    Description: An S3 URI to a zip file containing a .NET web application. The web application must have been published self-contained for the `win-x64` runtime, so it runs without a .NET runtime on the image. For example, `dotnet publish --configuration release --runtime win-x64 --self-contained true`
 
   DotnetBinaryName:
     Type: String
@@ -159,7 +161,10 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: !Sub '${ResourceName}-NSSM'
-      Version: !Ref ResourceVersion
+      # Components take a fixed semantic version - unlike recipes, they reject
+      # x wildcards. Content changes reuse this version and the service
+      # increments the build version (1.0.0/1, 1.0.0/2, ...).
+      Version: 1.0.0
       Platform: Windows
       Description: NSSM can be used to create a custom Windows Service. This component will download and install NSSM. The `Path` environment variable will also be updated.
       ChangeDescription: 'Created with CloudFormation'
@@ -237,7 +242,7 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: !Sub '${ResourceName}-Website-Installation'
-      Version: !Ref ResourceVersion
+      Version: 1.0.0
       Platform: Windows
       Description: Downloads and installs a .NET web application as a Windows Service using NSSM.
       ChangeDescription: 'Created with CloudFormation'
@@ -356,16 +361,11 @@ Resources:
                   commands:
                     - |
                       $ErrorActionPreference = 'Stop'
-                      try {
-                          $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
-                          if ($content -like '*<title>{{ HTMLTitleValidationString }}</ title>*') {
-                              Write-Host 'The website is responding on TCP/{{ TCPPort }}'
-                          } else {
-                              throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
-                          }
-                      } catch {
-                          # Something failed. Sleep before allowing retry
-                          Start-Sleep -Seconds 15
+                      $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
+                      if ($content -like '*<title>{{ HTMLTitleValidationString }}</title>*') {
+                          Write-Host 'The website is responding on TCP/{{ TCPPort }}'
+                      } else {
+                          throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
                       }
 
           - name: test
@@ -377,16 +377,11 @@ Resources:
                   commands:
                     - |
                       $ErrorActionPreference = 'Stop'
-                      try {
-                          $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
-                          if ($content -like '*<title>{{ HTMLTitleValidationString }}</ title>*') {
-                              Write-Host 'The website is responding on TCP/{{ TCPPort }}'
-                          } else {
-                              throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
-                          }
-                      } catch {
-                          # Something failed. Sleep before allowing retry
-                          Start-Sleep -Seconds 15
+                      $content = (Invoke-WebRequest -uri http://localhost:{{ TCPPort }} -UseBasicParsing).content
+                      if ($content -like '*<title>{{ HTMLTitleValidationString }}</title>*') {
+                          Write-Host 'The website is responding on TCP/{{ TCPPort }}'
+                      } else {
+                          throw 'The website is not responding on TCP/{{ TCPPort }}. Failed validation.'
                       }
 
   # Recipe which references Windows Baseline image built using the CloudFormation exported Image ARN from the `WindowsBaselineStack`.

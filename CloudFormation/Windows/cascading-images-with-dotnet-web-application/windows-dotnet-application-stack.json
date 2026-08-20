@@ -12,16 +12,12 @@
     "ParameterValue": "WindowsDotnetWebsite"
   },
   {
-    "ParameterKey": "ResourceVersion",
-    "ParameterValue": "1.0.0"
-  },
-  {
     "ParameterKey": "DotnetS3SourceZipFile",
     "ParameterValue": "s3://< Insert your bucket name here >/sample-web-application.zip"
   },
   {
     "ParameterKey": "DotnetBinaryName",
-    "ParameterValue": "sample-web-application"
+    "ParameterValue": "sample-web-application.exe"
   },
   {
     "ParameterKey": "TCPPort",

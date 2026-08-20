@@ -26,7 +26,7 @@ The [AWS::ImageBuilder::Image](https://docs.aws.amazon.com/AWSCloudFormation/lat
 
 ## Walkthrough
 
-It takes approximately 20 minutes for the stack build to complete.
+The container build typically takes 20 to 40 minutes.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI). 
 

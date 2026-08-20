@@ -32,7 +32,7 @@ The [AWS::ImageBuilder::ImagePipeline](https://docs.aws.amazon.com/AWSCloudForma
 
 ## Walkthrough
 
-It takes approximately 20 minutes for the stack build to complete.
+The container build typically takes 45 to 60 minutes.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI).
 

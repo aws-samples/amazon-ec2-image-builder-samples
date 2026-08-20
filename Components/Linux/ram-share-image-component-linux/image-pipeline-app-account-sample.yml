@@ -159,12 +159,15 @@ Resources:
   AmznLinuxImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: AmznLinux2-ImageRecipe-AppAccount
-      Version: 1.0.0
-      ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x
-      Description: Image Recipe for AmznLinux2 Server Images
+      Name: al2023-imagerecipe-appaccount
+      # x auto-increments the build version on recipe replacement
+      Version: 1.0.x
+      ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/al2023-imagerecipe-shared/x.x.x
+      Description: Image Recipe for Amazon Linux 2023 Server Images
       Components:
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x
+        # Replace with your application's components - the point of this recipe
+        # is that it builds on the image shared from the central account
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/hello-world-linux/x.x.x
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -174,7 +177,7 @@ Resources:
             VolumeSize: 30
       WorkingDirectory: /tmp
       Tags:
-        ParentOS: AmznLinux2
+        ParentOS: AL2023
 
   InfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration

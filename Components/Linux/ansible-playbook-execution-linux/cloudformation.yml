@@ -6,12 +6,12 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: ansible-playbook-sample
-      Description: This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.
+      Description: This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2023.
       Platform: Linux
-      Version: '1.0.0'
+      Version: 1.0.0
       Data: |
-        name: 'Ansible Playbook Execution on Amazon Linux 2'
-        description: 'This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2.'
+        name: 'Ansible Playbook Execution on Linux'
+        description: 'This is a sample component that demonstrates how to download and execute an Ansible playbook against Amazon Linux 2023.'
         schemaVersion: 1.0
         phases:
           - name: build
@@ -20,7 +20,7 @@ Resources:
                 action: ExecuteBash
                 inputs:
                   commands:
-                  - sudo amazon-linux-extras install -y ansible2
+                  - dnf install -y ansible-core
               - name: DownloadPlaybook
                 action: S3Download
                 inputs:
