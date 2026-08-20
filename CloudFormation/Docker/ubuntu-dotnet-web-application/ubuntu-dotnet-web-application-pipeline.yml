@@ -4,7 +4,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Ubuntu 22.04 container image to host
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds an Ubuntu container image to host
   a .NET web application, and publishes the image to the an Amazon Elastic Container Registry (ECR) repository. The pipeline, by default, is
   scheduled to run a build at 10:00AM Coordinated Universal Time (UTC) every day. The build will only run if dependent resources have been updated.
 
@@ -245,10 +245,11 @@ Resources:
     Properties:
       Name: !Ref ResourceName
       Version: !Ref ResourceVersion
-      # Docker Hub base image
-      ParentImage: ubuntu:22.04
-      # When using a custom source image (e.g. from DockerHub), make sure to specify the appropriate operating system platfrom
-      # via the "PlatformOverride" property.
+      # Docker Hub base image; the latest tag tracks the current Ubuntu LTS
+      ParentImage: ubuntu:latest
+      # Custom source images (e.g. from Docker Hub) need the operating system
+      # platform stated explicitly
+      PlatformOverride: Linux
       ContainerType: DOCKER
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'

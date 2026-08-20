@@ -2,7 +2,7 @@
 
 > **Note:** The walkthrough below still shows .NET 5 commands, and .NET 5 is past end of support - substitute a current .NET version when you build your application.
 
-This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build an Ubuntu 22.04 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
+This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build an Ubuntu Docker container image (from the latest Ubuntu LTS base image) that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
 
 The `DotnetS3SourceTarFile` parameter has no default - build and upload your own .NET web application to an S3 bucket you own first (see the walkthrough below), then pass its S3 URI when deploying the stack.
 
@@ -32,7 +32,7 @@ The [AWS::ImageBuilder::ImagePipeline](https://docs.aws.amazon.com/AWSCloudForma
 
 ## Walkthrough
 
-It takes approximately 20 minutes for the stack build to complete.
+The container build typically takes 30 to 45 minutes.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI).
 
