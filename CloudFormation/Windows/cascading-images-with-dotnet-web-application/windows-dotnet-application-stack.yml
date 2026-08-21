@@ -78,6 +78,35 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build a container image.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
