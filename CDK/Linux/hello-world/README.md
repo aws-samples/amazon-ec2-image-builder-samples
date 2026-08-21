@@ -47,7 +47,7 @@ Note: by default the builder instance will be terminated regardless the executio
 
 The parent image each pipeline builds on comes from the configuration key `ImageBuilderPipelineConfigurations/parentImage` - a map with one entry per region, because the same image has a different identifier in every region.
 
-The sample configuration references the Image Builder managed Ubuntu 22.04 image with an `x.x.x` wildcard version, such as `arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/x.x.x` for region `ap-southeast-2`. The wildcard resolves to the latest release of that image on every build, so the pipeline picks up new base images without configuration changes. You can also set a specific AMI ID (`ami-...`) per region if you need to pin the base image - see [Find a Linux AMI](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/finding-an-ami.html).
+The sample configuration references the Image Builder managed Ubuntu 24.04 image with an `x.x.x` wildcard version, such as `arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-24-lts-x86/x.x.x` for region `ap-southeast-2`. The wildcard resolves to the latest release of that image on every build, so the pipeline picks up new base images without configuration changes.
 
 ```
 "ImageBuilderPipelineConfigurations": [
@@ -82,12 +82,12 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
           "cfnImageRecipeName": "standalone-testrecipe02",
           "version": "1.0.x",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" }
+              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" }
           }
       },
       <!-- new pipeline configuration -->
@@ -102,12 +102,12 @@ Below are an example of the value in `ImageBuilderPipelineConfigurations` key th
           "cfnImageRecipeName": "testrecipe10001",
           "version": "1.0.x",
           "parentImage": {
-              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-22-lts-x86/x.x.x" },
-              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-22-lts-x86/x.x.x" }
+              "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+              "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" }
           }
       }
   ]
