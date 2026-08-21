@@ -76,6 +76,20 @@ Resources:
               AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
             Action: kms:*
             Resource: '*'
+          # Lets Image Builder's service-linked role publish to the
+          # encrypted topic. Wildcard principal + PrincipalArn condition
+          # grants the role without requiring it to exist yet.
+          - Sid: AllowImageBuilderNotifications
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder'
           - Sid: Allow administration of the key
             Effect: Allow
             Principal:
@@ -134,6 +148,10 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
+      # The sample's key also encrypts the notification topic - its policy
+      # includes the statement granting Image Builder's service-linked role
+      # use of the key for publishing.
+      KmsMasterKeyId: !GetAtt ImageEncryptionKMSKey.Arn
 
   ImageBuilderSNSPolicy:
     Metadata:
@@ -171,7 +189,7 @@ Resources:
         - Sid: allow-imagebuilderservice-id
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: imagebuilder.amazonaws.com
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:

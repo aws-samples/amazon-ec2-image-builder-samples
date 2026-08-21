@@ -102,10 +102,44 @@ Resources:
       Roles:
         - !Ref EC2IBRole
 
+  # Encrypts the notification topic. SNS can't use the AWS managed key here
+  # because Image Builder's service-linked role must be granted use of the
+  # key, and managed key policies can't be edited.
+  NotificationKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the Image Builder notification topic
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # Wildcard principal + PrincipalArn condition grants the
+          # service-linked role without requiring it to exist when the key
+          # is created.
+          - Sid: AllowImageBuilderNotifications
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder'
+
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
+      KmsMasterKeyId: !GetAtt NotificationKey.Arn
 
   ImageBuilderSNSPolicy:
     Metadata:
@@ -143,7 +177,7 @@ Resources:
         - Sid: allow-imagebuilder
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: imagebuilder.amazonaws.com
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:

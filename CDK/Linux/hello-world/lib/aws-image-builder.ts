@@ -1,8 +1,10 @@
-import { Annotations, Aws, CfnMapping, Stack } from 'aws-cdk-lib';
+import { Annotations, Aws, CfnMapping, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { ISecurityGroup } from 'aws-cdk-lib/aws-ec2';
 import {
+  AnyPrincipal,
   CfnInstanceProfile,
   ManagedPolicy,
+  PolicyStatement,
   Role,
   ServicePrincipal,
 } from 'aws-cdk-lib/aws-iam';
@@ -14,6 +16,7 @@ import {
   CfnImageRecipe,
   CfnInfrastructureConfiguration,
 } from 'aws-cdk-lib/aws-imagebuilder';
+import { Key } from 'aws-cdk-lib/aws-kms';
 import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
 import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
@@ -95,7 +98,37 @@ export class AWSImageBuilderConstruct extends Construct {
         instanceProfileName: `${props.instanceProfileName}-${props.name}-${Aws.REGION}`,
       }
     );
-    const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {});
+    // Encrypts the notification topic. Image Builder publishes through its
+    // service-linked role, which the key policy must allow - the AWS managed
+    // SNS key's policy can't be edited to do that. The wildcard principal
+    // with the PrincipalArn condition grants exactly that role without
+    // requiring it to exist when the key is created (an account-root
+    // principal would only delegate to IAM policies, which the
+    // service-linked role doesn't have).
+    const notificationKey = new Key(this, `NotificationKey${props.name}`, {
+      description: 'Encrypts the Image Builder notification topic',
+      enableKeyRotation: true,
+      // Delete the key with the stack; the construct default retains it
+      // (and its monthly charge) after a destroy.
+      removalPolicy: RemovalPolicy.DESTROY,
+      pendingWindow: Duration.days(7),
+    });
+    notificationKey.addToResourcePolicy(
+      new PolicyStatement({
+        sid: 'AllowImageBuilderNotifications',
+        principals: [new AnyPrincipal()],
+        actions: ['kms:GenerateDataKey*', 'kms:Decrypt'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: {
+            'aws:PrincipalArn': `arn:${Aws.PARTITION}:iam::${Aws.ACCOUNT_ID}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder`,
+          },
+        },
+      })
+    );
+    const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {
+      masterKey: notificationKey,
+    });
 
     const terminationConfig = props.debug ? false : true;
     //Manage Infrastructure configurations
