@@ -3,9 +3,10 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  EC2 Image Builder sample: build a Windows Server 2025 image whose build instance runs the
-  latest Amazon SSM Agent, installed through the recipe's UserDataOverride before
-  the build starts. The resulting image ID is published to an SSM parameter.
+  EC2 Image Builder sample: build a Windows Server 2025 image whose SSM Agent is updated
+  to the latest version during the build, using the Amazon-managed
+  build-image-with-update-ssm-agent workflow. The resulting image ID is
+  published to an SSM parameter.
 
 Resources:
   # S3 bucket for build logs. The bucket has versioning enabled - to delete the
@@ -78,6 +79,35 @@ Resources:
       Roles:
         - !Ref InstanceRole
 
+  # The role Image Builder assumes to run the image workflows below. The
+  # managed policy covers the standard workflow actions; the inline statement
+  # adds the agent-update document, which the policy's SendCommand list
+  # doesn't include.
+  WorkflowExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: UpdateSsmAgentDocument
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:*:*:document/AWS-UpdateSSMAgent'
+
   InfrastructureConfiguration:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
@@ -114,23 +144,6 @@ Resources:
       ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2025-english-full-base-x86/x.x.x'
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-windows/x.x.x'
-      AdditionalInstanceConfiguration:
-        # UserDataOverride replaces the user data Image Builder normally supplies,
-        # so this runs before the SSM Agent connects - the one window where you
-        # can change the agent itself.
-        UserDataOverride:
-          Fn::Base64:
-            !Sub |
-              <powershell>
-              $ErrorActionPreference = 'Stop'
-              $source = 'https://amazon-ssm-${AWS::Region}.s3.${AWS::Region}.${AWS::URLSuffix}/latest/windows_amd64/AmazonSSMAgentSetup.exe'
-              $installer = Join-Path -Path $env:TEMP -ChildPath 'AmazonSSMAgentSetup.exe'
-              $webClient = New-Object -TypeName System.Net.WebClient
-              $webClient.DownloadFile($source, $installer)
-              $webClient.Dispose()
-              Start-Process -FilePath $installer -ArgumentList @('/s') -Wait
-              Remove-Item -Path $installer -Force
-              </powershell>
 
   # AWS::ImageBuilder::Image builds once at stack-create time and completes in
   # CloudFormation only when the image is AVAILABLE (typically 45 to 60 minutes).
@@ -140,6 +153,14 @@ Resources:
       ImageRecipeArn: !Ref ImageRecipe
       InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
       DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt WorkflowExecutionRole.Arn
+      # The managed build workflow updates the SSM Agent (via the
+      # AWS-UpdateSSMAgent document) before it runs the recipe's components,
+      # so the image ships with the latest agent. Listing workflows replaces
+      # the defaults, so the standard test workflow is named explicitly.
+      Workflows:
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/build/build-image-with-update-ssm-agent/x.x.x'
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/test/test-image/x.x.x'
 
   # Publishes the resulting image ID to an SSM parameter for downstream
   # consumers (launch templates, other stacks). The /imagebuilder/ parameter

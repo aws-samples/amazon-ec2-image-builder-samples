@@ -21,14 +21,14 @@ From there:
 | Sample | What it shows |
 |---|---|
 | [amazon-linux-2023-attestable-image](CloudFormation/Linux/amazon-linux-2023-attestable-image/) | Attestable AL2023 AMIs with dm-verity and NitroTPM PCR measurements, built with custom image workflows |
-| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Installing the latest SSM Agent before the build starts, using `UserDataOverride` - Amazon Linux 2023, Ubuntu 22.04, and Windows Server 2025 variants |
+| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Updating the SSM Agent to the latest release during the build, using the Amazon-managed agent-update workflow - Amazon Linux 2023, Ubuntu 24.04, and Windows Server 2025 variants |
 
 ### CloudFormation - Windows AMIs
 
 | Sample | What it shows |
 |---|---|
 | [cascading-images-with-dotnet-web-application](CloudFormation/Windows/cascading-images-with-dotnet-web-application/) | Golden image hierarchy - a baseline Windows image stack whose exported Image ARN feeds an application image stack; NSSM-managed Windows service |
-| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Installing the latest SSM Agent before the build starts, using `UserDataOverride` - the Windows Server 2025 variant of the multi-OS sample listed under Linux AMIs |
+| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Updating the SSM Agent to the latest release during the build - the Windows Server 2025 variant of the multi-OS sample listed under Linux AMIs |
 | [windows-server-with-vscode](CloudFormation/Windows/windows-server-with-vscode/) | A custom component with build, validate, and test phases that installs an application (VS Code) on Windows Server 2025 |
 
 ### CloudFormation - container images

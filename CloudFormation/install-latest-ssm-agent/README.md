@@ -1,14 +1,14 @@
 # Build an image with the latest Amazon SSM Agent
 
-Image Builder drives build instances through AWS Systems Manager, and the agent version baked into a base image can lag the latest release. These templates use the image recipe's `UserDataOverride` to install the current Amazon SSM Agent when the build instance boots - before Image Builder connects to it - so both the build and the resulting image run the latest agent.
+Image Builder drives build instances through AWS Systems Manager, and the agent version baked into a base image can lag the latest release. These templates run the Amazon-managed `build-image-with-update-ssm-agent` workflow, which updates the agent (through the `AWS-UpdateSSMAgent` document) before running the recipe's components - so the resulting image ships with the latest agent, with no install commands to maintain.
 
 Three templates, one per operating system. Each is a complete, self-contained build:
 
-| Template | Base image | Agent install method |
-|---|---|---|
-| `amazon-linux-2023.yml` | Amazon Linux 2023 (latest managed image) | `dnf install` from the regional SSM agent bucket |
-| `ubuntu.yml` | Ubuntu 22.04 LTS (latest managed image) | `snap refresh amazon-ssm-agent --channel=candidate` (the candidate channel carries the newest agent release) |
-| `windows-server.yml` | Windows Server 2025 Full Base (latest managed image) | `AmazonSSMAgentSetup.exe /s` from the regional SSM agent bucket |
+| Template | Base image |
+|---|---|
+| `amazon-linux-2023.yml` | Amazon Linux 2023 (latest managed image) |
+| `ubuntu.yml` | Ubuntu 24.04 LTS (latest managed image) |
+| `windows-server.yml` | Windows Server 2025 Full Base (latest managed image) |
 
 ## Cost
 
@@ -32,7 +32,7 @@ Substitute the template file for the OS you want. The stack stays in `CREATE_IN_
 
 ## How it works
 
-`UserDataOverride` replaces the user data Image Builder normally supplies to the build instance. The script runs on first boot, before the SSM Agent registers with Systems Manager - which is the only window where you can upgrade the agent itself. After the script finishes, Image Builder connects through the freshly installed agent and runs the recipe's components as usual.
+Custom image workflows replace the default build and test workflows when you list them on the image, so each template names both the agent-update build workflow and the standard `test-image` workflow. Running workflows requires an execution role that the service assumes; the templates create one from the `EC2ImageBuilderExecutionPolicy` managed policy plus a single inline statement - the policy's `ssm:SendCommand` list doesn't include the `AWS-UpdateSSMAgent` document the workflow runs.
 
 The recipes reference their parent images and components with `x.x.x` version wildcards, so each deployment resolves the latest managed base image and component versions at build time.
 

@@ -3,9 +3,10 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  EC2 Image Builder sample: build an Ubuntu 22.04 image whose build instance runs the
-  latest Amazon SSM Agent, installed through the recipe's UserDataOverride before
-  the build starts. The resulting image ID is published to an SSM parameter.
+  EC2 Image Builder sample: build an Ubuntu 24.04 image whose SSM Agent is updated
+  to the latest version during the build, using the Amazon-managed
+  build-image-with-update-ssm-agent workflow. The resulting image ID is
+  published to an SSM parameter.
 
 Resources:
   # S3 bucket for build logs. The bucket has versioning enabled - to delete the
@@ -78,10 +79,39 @@ Resources:
       Roles:
         - !Ref InstanceRole
 
+  # The role Image Builder assumes to run the image workflows below. The
+  # managed policy covers the standard workflow actions; the inline statement
+  # adds the agent-update document, which the policy's SendCommand list
+  # doesn't include.
+  WorkflowExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: UpdateSsmAgentDocument
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:*:*:document/AWS-UpdateSSMAgent'
+
   InfrastructureConfiguration:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
-      Name: install-latest-ssm-agent-ubuntu-2204
+      Name: install-latest-ssm-agent-ubuntu-2404
       InstanceProfileName: !Ref InstanceProfile
       Logging:
         S3Logs:
@@ -99,31 +129,21 @@ Resources:
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
-      LogGroupName: /aws/imagebuilder/Ubuntu2204WithLatestSsmAgent
+      LogGroupName: /aws/imagebuilder/Ubuntu2404WithLatestSsmAgent
       RetentionInDays: 7
 
   ImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: Ubuntu2204WithLatestSsmAgent
+      Name: Ubuntu2404WithLatestSsmAgent
       # x auto-increments the build version, so updates that replace the
       # recipe never collide with an existing name + version pair
       Version: 1.0.x
       # x.x.x resolves to the latest version of the managed parent image at
       # build time, so each build starts from the current base release.
-      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-server-22-lts-x86/x.x.x'
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/ubuntu-server-24-lts-x86/x.x.x'
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
-      AdditionalInstanceConfiguration:
-        # UserDataOverride replaces the user data Image Builder normally supplies,
-        # so this runs before the SSM Agent connects - the one window where you
-        # can change the agent itself.
-        UserDataOverride:
-          Fn::Base64: |
-            #!/bin/bash
-            systemctl stop snap.amazon-ssm-agent.amazon-ssm-agent.service
-            snap refresh amazon-ssm-agent --channel=candidate
-            systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
   # AWS::ImageBuilder::Image builds once at stack-create time and completes in
   # CloudFormation only when the image is AVAILABLE (typically 15 to 30 minutes).
@@ -133,6 +153,14 @@ Resources:
       ImageRecipeArn: !Ref ImageRecipe
       InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
       DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt WorkflowExecutionRole.Arn
+      # The managed build workflow updates the SSM Agent (via the
+      # AWS-UpdateSSMAgent document) before it runs the recipe's components,
+      # so the image ships with the latest agent. Listing workflows replaces
+      # the defaults, so the standard test workflow is named explicitly.
+      Workflows:
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/build/build-image-with-update-ssm-agent/x.x.x'
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/test/test-image/x.x.x'
 
   # Publishes the resulting image ID to an SSM parameter for downstream
   # consumers (launch templates, other stacks). The /imagebuilder/ parameter
@@ -143,9 +171,9 @@ Resources:
   DistributionConfiguration:
     Type: AWS::ImageBuilder::DistributionConfiguration
     Properties:
-      Name: install-latest-ssm-agent-ubuntu-2204
+      Name: install-latest-ssm-agent-ubuntu-2404
       Distributions:
         - Region: !Ref AWS::Region
           SsmParameterConfigurations:
-            - ParameterName: /imagebuilder/samples/ubuntu-2204-latest-ssm-agent
+            - ParameterName: /imagebuilder/samples/ubuntu-2404-latest-ssm-agent
               DataType: aws:ec2:image
