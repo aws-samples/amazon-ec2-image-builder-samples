@@ -26,7 +26,7 @@ The [AWS::ImageBuilder::Image](https://docs.aws.amazon.com/AWSCloudFormation/lat
 
 ## Walkthrough
 
-The container build typically takes 20 to 40 minutes.
+The container build typically takes 10 to 15 minutes, most of which is Image Builder provisioning and validating the build and test instances rather than the Docker build itself.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI). 
 

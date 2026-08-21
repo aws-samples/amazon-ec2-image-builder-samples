@@ -108,7 +108,7 @@ To create the container image, navigate to the EC2 Image Builder console, then s
 
 ## Troubleshooting
 
-While the stack is building, you will see an EC2 instance running. This is either the build or test instance. AWS Systems Manager (SSM) Automation will also run. You can observe this automation to see the steps EC2 Image Builder takes to build your image.
+While the stack is building, you will see an EC2 instance running. This is the build instance. AWS Systems Manager (SSM) Automation will also run. You can observe this automation to see the steps EC2 Image Builder takes to build your image.
 
 If the stack fails, check the CloudFormation events. These events include a description of any failed resources.
 
