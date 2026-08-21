@@ -102,10 +102,44 @@ Resources:
       Roles:
         - !Ref EC2IBRole
 
+  # Encrypts the notification topic. SNS can't use the AWS managed key here
+  # because Image Builder's service-linked role must be granted use of the
+  # key, and managed key policies can't be edited.
+  NotificationKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the Image Builder notification topic
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # Wildcard principal + PrincipalArn condition grants the
+          # service-linked role without requiring it to exist when the key
+          # is created.
+          - Sid: AllowImageBuilderNotifications
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder'
+
   ImageBuilderSNSTopic:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
+      KmsMasterKeyId: !GetAtt NotificationKey.Arn
 
   ImageBuilderSNSPolicy:
     Metadata:
@@ -143,7 +177,7 @@ Resources:
         - Sid: allow-imagebuilder
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: imagebuilder.amazonaws.com
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -159,12 +193,15 @@ Resources:
   AmznLinuxImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: AmznLinux2-ImageRecipe-AppAccount
-      Version: 1.0.0
-      ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/amznlinux2-imagerecipe-shared/x.x.x
-      Description: Image Recipe for AmznLinux2 Server Images
+      Name: al2023-imagerecipe-appaccount
+      # x auto-increments the build version on recipe replacement
+      Version: 1.0.x
+      ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${SharedAccountId}:image/al2023-imagerecipe-shared/x.x.x
+      Description: Image Recipe for Amazon Linux 2023 Server Images
       Components:
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/apache-tomcat-9-linux/x.x.x
+        # Replace with your application's components - the point of this recipe
+        # is that it builds on the image shared from the central account
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/hello-world-linux/x.x.x
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -174,7 +211,7 @@ Resources:
             VolumeSize: 30
       WorkingDirectory: /tmp
       Tags:
-        ParentOS: AmznLinux2
+        ParentOS: AL2023
 
   InfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration

@@ -44,11 +44,11 @@ Parameters:
     Default: '1.0.0'
     Description: The version to use for Image Builder resources
 
-  DotnetSourceZipFile:
+  DotnetS3SourceZipFile:
     Type: String
-    AllowedPattern: '^https://.+'
-    ConstraintDescription: Must be an HTTPS URL to a zip file you control - there is no default
-    Description: An HTTPS URL to a zip file containing a .NET web application, downloaded onto the build instance with WebDownload. The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
+    AllowedPattern: '^s3://.+'
+    ConstraintDescription: Must be an S3 URI to a zip file you own - there is no default
+    Description: An S3 URI to a zip file containing a .NET web application, downloaded onto the build instance with S3Download (the build instance role has S3 read access). The web application must have been published for the `win-x64` runtime. For example, `dotnet publish --configuration release --runtime win-x64`
 
   DotnetSDKBinaryURL:
     Type: String
@@ -89,6 +89,35 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
 
   # This creates an ECR repository, where EC2 Image builder can push the container image to after creation.
   # When deleting this stack, make sure to empty the repository first. Otherwise, you
@@ -191,9 +220,9 @@ Resources:
       Data: !Sub |
         schemaVersion: 1.0
         constants:
-          - DotnetSourceZipFile:
+          - DotnetS3SourceZipFile:
               type: string
-              value: '${DotnetSourceZipFile}'
+              value: '${DotnetS3SourceZipFile}'
           - DotnetSDKUrl:
               type: string
               value: '${DotnetSDKBinaryURL}'
@@ -215,9 +244,9 @@ Resources:
                   commands:
                     - c:\\dotnet-sdk-win-x64.exe /install /quiet /norestart
               - name: DownloadWebsiteZipFile
-                action: WebDownload
+                action: S3Download
                 inputs:
-                  - source: '{{ DotnetSourceZipFile }}'
+                  - source: '{{ DotnetS3SourceZipFile }}'
                     destination: 'c:\\windows-webapp.zip'
               - name: ExtractWebsite
                 action: ExecutePowerShell

@@ -1,10 +1,10 @@
-# Windows Server with the Amazon SSM Agent upgraded to the latest version
+# Windows Server Image with Visual Studio Code Installed
 
-This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build a Windows Server Amazon Machine Image (AMI) with the latest version of the Amazon SSM Agent installed.
+This is a sample template that demonstrates how to use the EC2 Image Builder CloudFormation resources to build a Windows Server 2025 Amazon Machine Image (AMI) with Visual Studio Code installed.
 
-This templated uses the [UserDataOverride](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-imagebuilder-imagerecipe-additionalinstanceconfiguration.html) capability in an Image Recipe to upgrade the Amazon SSM Agent.
+This template works in standard and GovCloud (US) regions.
 
-***Internet connectivity is required in your default VPC*** to download the Amazon SSM Agent installation files. If you do not have a default VPC, you will need to specify a subnet ID in the infrastructure configuration section of the CloudFormation template.
+***Internet connectivity is required in your default VPC*** to download Visual Studio Code installation files. If you do not have a default VPC, you will need to specify a subnet ID in the infrastructure configuration section of the CloudFormation template.
 
 ## How this Stack Works
 
@@ -18,20 +18,22 @@ Then, an [AWS::IAM::InstanceProfile](https://docs.aws.amazon.com/AWSCloudFormati
 
 Next, an [AWS::ImageBuilder::InfrastructureConfiguration](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html) resource is created, and the Instance Profile is specified as one of its parameters. This parameter tells EC2 Image Builder to use the specified profile with the EC2 instance during the build.
 
-The [AWS::ImageBuilder::ImageRecipe](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html) ties together the Windows Server parent image and the customer userdata to upgrade the SSM Agent.
+To install Visual Studio Code, a custom [AWS::ImageBuilder::Component](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-component.html) is used with the PowerShell commands that download and install the application. The component includes a simple validation step, along with a test step. These steps ensure that Visual Studio Code is installed and can be run from the PowerShell command line.
+
+The [AWS::ImageBuilder::ImageRecipe](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html) ties together the Windows Server 2025 parent image and the Visual Studio Code component.
 
 The [AWS::ImageBuilder::Image](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html) represents the built image.
 
-Finally, the image resource is used to create an [AWS::SSM::Parameter](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html) that has the image id as the value. We could just as easily have updated a launch configuration for an Auto Scaling group, or passed the attribute to other CloudFormation resources that reference the Image Id of an AMI.
+Finally, an [AWS::ImageBuilder::DistributionConfiguration](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-distributionconfiguration.html) publishes the resulting image ID to the SSM parameter `/imagebuilder/samples/windows-server-vscode` with the `aws:ec2:image` data type, ready for launch templates or other stacks to consume. The parameter is written by the service, so it stays behind when the stack is deleted - the cleanup steps below cover it.
 
 ## Walkthrough
 
-It takes approximately 30 minutes for the stack build to complete.
+The build typically takes 45 to 60 minutes.
 
-1. Upload the ```windows-server-with-latest-ssm-agent.yml``` template to CloudFormation.
+1. Upload the ```windows-server-with-vscode.yml``` template to CloudFormation.
 2. You will see a checkbox informing you that the stack creates IAM resources. Read and check the box.
 3. Wait for the stack to build.
-4. Note the AWS::ImageBuilder::Image resource ```WindowServer2019WithLatestSSMAgent``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` when complete.
+4. Note the AWS::ImageBuilder::Image resource ```WindowsServerWithVisualStudioCode``` will show ```CREATE_IN_PROGRESS``` while the image is being created, and will later show ```CREATE_COMPLETE``` when complete.
 
 ## Troubleshooting
 
@@ -46,3 +48,4 @@ To delete the resources created by the stack:
 1. Delete the contents of the S3 bucket created by the stack, including all object versions and delete markers - the bucket has versioning enabled, so `aws s3 rm --recursive` alone leaves versions behind and the stack deletion fails on a non-empty bucket. The console's "Empty bucket" action removes versions for you. To keep the bucket, add a ```Retain``` deletion policy to the CloudFormation bucket resource. See https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html for more information on ```DeletionPolicy``` attributes.
 2. Delete the stack in the CloudFormation console, or by using the CLI/SDK.
 3. You must delete any AMIs created by the stack. You can use the EC2 console, CLI, or SDK to delete the AMIs. Note that deleting the CloudFormation stack will NOT delete the AMIs created by the stack.
+4. Delete the `/imagebuilder/samples/windows-server-vscode` SSM parameter - the service writes it, so it isn't deleted with the stack.

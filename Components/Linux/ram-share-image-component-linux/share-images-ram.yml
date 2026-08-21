@@ -84,7 +84,7 @@ Resources:
                 Action:
                   - imagebuilder:PutImagePolicy
                   - imagebuilder:GetImage
-                Resource: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/amznlinux2-imagerecipe-shared/*
+                Resource: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/al2023-imagerecipe-shared/*
       Path: /
 
   ShareImageLambda:

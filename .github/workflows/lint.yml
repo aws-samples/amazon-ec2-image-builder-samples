@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [main, master]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -20,19 +24,21 @@ jobs:
           fetch-depth: 0
       - name: Find changed CloudFormation templates
         id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # Select by content: CFN templates also live under Components/
-          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+          git diff -z --name-only --diff-filter=ACMR "origin/${BASE_REF}"...HEAD \
             | grep -zE '\.(yml|yaml|template)$' \
             | sed -z 's|^|./|' \
-            | xargs -0 -r grep -lE '^(AWSTemplateFormatVersion|Resources):' > changed.txt || true
-          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
-          cat changed.txt
+            | xargs -0 -r grep -lZE '^(AWSTemplateFormatVersion|Resources):' > changed.txt || true
+          echo "count=$(tr -cd '\0' < changed.txt | wc -c)" >> "$GITHUB_OUTPUT"
+          tr '\0' '\n' < changed.txt
       - name: Run cfn-lint
         if: steps.changed.outputs.count != '0'
         run: |
           pip install cfn-lint==1.55.1
-          xargs -a changed.txt cfn-lint --non-zero-exit-code error
+          xargs -0 -r cfn-lint --non-zero-exit-code error < changed.txt
 
   # awstoe validates a document against the action modules of the OS it runs
   # on, so Windows components (ExecutePowerShell and friends) fail on a Linux
@@ -47,25 +53,37 @@ jobs:
           fetch-depth: 0
       - name: Find changed component documents
         id: changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # AWSTOE documents are identified by their top-level schemaVersion key,
           # regardless of directory - the same tree also holds CFN templates and
           # Ansible playbooks, which awstoe rejects
-          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+          git diff -z --name-only --diff-filter=ACMR "origin/${BASE_REF}"...HEAD \
             | grep -zE '\.(yml|yaml)$' \
             | grep -zv '^Components/Windows/' \
             | sed -z 's|^|./|' \
-            | xargs -0 -r grep -l '^schemaVersion:' > changed.txt || true
-          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
-          cat changed.txt
+            | xargs -0 -r grep -lZ '^schemaVersion:' > changed.txt || true
+          echo "count=$(tr -cd '\0' < changed.txt | wc -c)" >> "$GITHUB_OUTPUT"
+          tr '\0' '\n' < changed.txt
       - name: Validate with awstoe
         if: steps.changed.outputs.count != '0'
         run: |
-          # awstoe is the engine that runs components on build instances
-          curl -sSf -o awstoe https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe
+          # awstoe is the engine that runs components on build instances.
+          # Verify the binary against the AWSTOE signing key before running
+          # it; the pinned fingerprint is published in the Image Builder docs.
+          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe
+          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe.sig
+          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/assets/awstoe.gpg
+          gpg --import awstoe.gpg
+          # Bind the verification to the pinned key: VALIDSIG carries the
+          # signing key's fingerprint, so a keyring with extra keys can't
+          # satisfy this check.
+          gpg --status-fd 1 --verify ./awstoe.sig ./awstoe \
+            | grep -q 'VALIDSIG.*F6DDE01C869FD63915E55742DEBDC156F5AEBC52'
           chmod +x awstoe
           failed=0
-          while read -r doc; do
+          while IFS= read -rd '' doc; do
             echo "::group::$doc"
             ./awstoe validate --documents "$doc" || failed=1
             echo "::endgroup::"
@@ -82,25 +100,30 @@ jobs:
       - name: Find changed Windows component documents
         id: changed
         shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+          git diff -z --name-only --diff-filter=ACMR "origin/${BASE_REF}"...HEAD \
             | grep -zE '\.(yml|yaml)$' \
             | grep -z '^Components/Windows/' \
             | sed -z 's|^|./|' \
-            | xargs -0 -r grep -l '^schemaVersion:' > changed.txt || true
-          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
-          cat changed.txt
+            | xargs -0 -r grep -lZ '^schemaVersion:' > changed.txt || true
+          echo "count=$(tr -cd '\0' < changed.txt | wc -c)" >> "$GITHUB_OUTPUT"
+          tr '\0' '\n' < changed.txt
       - name: Validate with awstoe
         if: steps.changed.outputs.count != '0'
         shell: pwsh
         run: |
+          # AWS signs the Windows binary with Authenticode rather than
+          # publishing a detached signature, so verification differs from the
+          # Linux job's GPG check.
           Invoke-WebRequest -Uri https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/windows/amd64/awstoe.exe -OutFile awstoe.exe
           $sig = Get-AuthenticodeSignature .\awstoe.exe
           if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike '*Amazon*') {
             throw "awstoe.exe signature check failed: $($sig.Status)"
           }
           $failed = 0
-          foreach ($doc in Get-Content changed.txt) {
+          foreach ($doc in (Get-Content -Raw changed.txt) -split "`0" | Where-Object { $_ }) {
             Write-Output "::group::$doc"
             .\awstoe.exe validate --documents "$doc"
             if ($LASTEXITCODE -ne 0) { $failed = 1 }
@@ -116,13 +139,14 @@ jobs:
         with:
           fetch-depth: 0
       - name: Parse changed JSON files
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git diff -z --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
-            | grep -zE '\.json$' | grep -zv package-lock | tr '\0' '\n' > changed.txt || true
+          git diff -z --name-only --diff-filter=ACMR "origin/${BASE_REF}"...HEAD \
+            | grep -zE '\.json$' | grep -zv package-lock > changed.txt || true
           failed=0
-          while read -r f; do
+          while IFS= read -rd '' f; do
             echo "checking $f"
             python3 -m json.tool "./$f" > /dev/null || failed=1
           done < changed.txt
           exit "$failed"
-

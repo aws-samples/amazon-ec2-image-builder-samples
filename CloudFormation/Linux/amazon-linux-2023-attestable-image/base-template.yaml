@@ -86,6 +86,35 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${LogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:

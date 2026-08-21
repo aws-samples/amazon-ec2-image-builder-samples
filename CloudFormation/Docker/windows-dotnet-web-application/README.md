@@ -2,7 +2,7 @@
 
 > **Note:** This sample installs a .NET 6 SDK (out of support since November 2024) on a Windows Server 2019 base. If you're building on this today, point `DotnetSDKBinaryURL` at a current SDK and consider a newer base image.
 
-`DotnetSourceZipFile` has no default - build and publish your own application zip (see the walkthrough below), then pass an HTTPS URL you control when deploying the stack. Don't point production builds at zip files from accounts you don't own.
+The `DotnetS3SourceZipFile` parameter has no default - build and upload your own .NET web application zip to an S3 bucket you own first (see the walkthrough below), then pass its S3 URI when deploying the stack.
 
 This is a sample template that demonstrates how to use EC2 Image Builder CloudFormation resources to build a Windows Server 2019 Docker container image that can host a .NET web application. The image will be published to the specified Amazon Elastic Container Registry (ECR) repository.
 
@@ -32,7 +32,7 @@ The [AWS::ImageBuilder::ImagePipeline](https://docs.aws.amazon.com/AWSCloudForma
 
 ## Walkthrough
 
-It takes approximately 20 minutes for the stack build to complete.
+The container build typically takes 20 to 45 minutes. Most of that time goes to the Windows build instance boot and to pulling the multi-gigabyte Windows Server Core base layers during the Docker build.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI).
 
@@ -61,21 +61,22 @@ Next, the .NET application needs to be compiled for Windows 2019.
 dotnet publish --configuration release
 ```
 
-The compiled application should exist in the ```./bin/release/net6.0/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.zip``` file, from there you can copy the archive to your release management software or public storage.
+The compiled application should exist in the ```./bin/release/net6.0/publish``` folder. The next step is to compress the files and upload them to an S3 bucket you own. The build instance downloads the zip with its instance role, so the bucket stays private:
 
 ```shell
 cd bin/release/net6.0/publish
 Compress-Archive -Path ./* -DestinationPath C:\path\to\windows-testapp.zip
+aws s3 cp C:\path\to\windows-testapp.zip s3://your-bucket/windows-testapp.zip
 ```
 
-Next, update the CloudFormation parameters .json file (```windows-dotnet-web-application-pipeline.json```) with the S3 object used in the AWS CLI command.
+Next, update the CloudFormation parameters .json file (```windows-dotnet-web-application-pipeline.json```) with the S3 URI used in the upload.
 
 ### Deploying the Stack
 
 #### AWS Management Console
 
 1. Upload the ```windows-dotnet-web-application-pipeline.yml``` template to CloudFormation.
-2. Update the stack parameters as desired, ensuring the ```DotnetSourceZipFile``` parameter points to the S3 location used when uploading the .NET web application to S3.
+2. Update the stack parameters as desired, ensuring the ```DotnetS3SourceZipFile``` parameter is the S3 URI of the uploaded .NET web application zip.
 3. You will see a checkbox informing you that the stack creates IAM resources. Read and check the box.
 4. Wait for the stack to build.
 5. Once built, a new Image Builder pipeline will exist. You can view this in the Image Builder console, and optionally trigger a manual execution of the pipeline to start the first image creation.
@@ -101,7 +102,7 @@ To create the container image, navigate to the EC2 Image Builder console, then s
 
 ## Troubleshooting
 
-While the stack is building, you will see an EC2 instance running. This is either the build or test instance. AWS Systems Manager (SSM) Automation will also run. You can observe this automation to see the steps EC2 Image Builder takes to build your image.
+While the stack is building, you will see an EC2 instance running. This is the build instance. AWS Systems Manager (SSM) Automation will also run. You can observe this automation to see the steps EC2 Image Builder takes to build your image.
 
 If the stack fails, check the CloudFormation events. These events include a description of any failed resources.
 

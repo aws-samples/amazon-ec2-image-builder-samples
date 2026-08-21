@@ -10,9 +10,5 @@
   {
     "ParameterKey": "ResourceName",
     "ParameterValue": "WindowsBaseline"
-  },
-  {
-    "ParameterKey": "ResourceVersion",
-    "ParameterValue": "1.0.0"
   }
 ]

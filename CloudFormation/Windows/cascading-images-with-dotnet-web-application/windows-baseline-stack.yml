@@ -4,7 +4,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 
 Description: >
-  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a baseline Windows Server Core 2019 image. The pipeline, by default, is scheduled to run a build at 8:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
+  This sample template creates AWS CloudFormation resources for an EC2 ImageBuilder pipeline that builds a baseline Windows Server 2025 image. The pipeline, by default, is scheduled to run a build at 8:00AM Coordinated Universal Time (UTC) daily. The build will only run if dependent resources have been updated.
 
 Parameters:
   CustomSubnetId:
@@ -24,7 +24,9 @@ Parameters:
 
   ResourceVersion:
     Type: String
-    Default: '1.0.0'
+    # x auto-increments the build version, so recipe replacements never
+    # collide with an existing name + version pair
+    Default: 1.0.x
     Description: The version to use for Image Builder resources
 
 Conditions:
@@ -51,6 +53,35 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
 
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
@@ -126,7 +157,7 @@ Resources:
       Tags:
         Purpose: ImageBuilderSample
 
-  # Recipe which references the latest Windows Server 2019 image, and includes a list of AWS managed quick-start components.
+  # Recipe which references the latest Windows Server 2025 image, and includes a list of AWS managed quick-start components.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
   Recipe:
     Type: AWS::ImageBuilder::ImageRecipe
@@ -139,7 +170,7 @@ Resources:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/powershell-lts-windows/x.x.x'
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/windows-activation-test/x.x.x'
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-test-windows/x.x.x'
-      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2019-english-full-base-x86/x.x.x'
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2025-english-full-base-x86/x.x.x'
       Tags:
         Purpose: ImageBuilderSample
       WorkingDirectory: 'C:\'

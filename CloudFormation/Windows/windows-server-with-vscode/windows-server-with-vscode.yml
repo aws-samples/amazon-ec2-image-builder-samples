@@ -24,6 +24,35 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
   # By default, AWS Services do not have permission to perform actions on your instances. This grants
   # AWS Systems Manager (SSM) and EC2 Image Builder the necessary permissions to build an image.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-iam-role.html
@@ -81,10 +110,10 @@ Resources:
 
   # Specifies the infrastructure within which to build and test your image.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-infrastructureconfiguration.html
-  WindowsServer2016ImageInfrastructureConfiguration:
+  WindowsServerImageInfrastructureConfiguration:
     Type: AWS::ImageBuilder::InfrastructureConfiguration
     Properties:
-      Name: WindowsServer-2016-VSCode-Image-Infrastructure-Configuration
+      Name: WindowsServer-VSCode-Image-Infrastructure-Configuration
       InstanceProfileName:
         Ref: InstanceProfile
       # Specify an S3 bucket and EC2 Image Builder will save logs to the bucket.
@@ -174,19 +203,21 @@ Resources:
                         exit 1
                       }
 
-  # Recipe which references the latest (x.x.x) version of Windows Server 2016 English AMI with Desktop Experience).
+  # Recipe which references the latest (x.x.x) version of the Windows Server 2025 English AMI with Desktop Experience.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-imagerecipe.html
-  WindowsServer2016ImageRecipe:
+  WindowsServerImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: Windows_Server-2016-VisualStudioCode
-      Version: 0.0.1
+      Name: WindowsServer-VisualStudioCode
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair
+      Version: 1.0.x
       # ${AWS::Partition} returns the partition where you are running the CloudFormation template. For standard AWS regions, the
       # partition is aws. For resources elsewhere, the partition is aws-partitionname. For example, China (Beijing and Ningxia)
       # regions use aws-cn and AWS GovCloud (US) regions are aws-us-gov.
       # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/pseudo-parameter-reference.html
       ParentImage:
-        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2016-english-full-base-x86/x.x.x
+        Fn::Sub: arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2025-english-full-base-x86/x.x.x
       Components:
         - ComponentArn:
             Ref: VisualStudioCodeComponent
@@ -194,21 +225,28 @@ Resources:
   # The Image resource will show complete in CloudFormation once your image is done building. Use this resource later in your
   # stack to reference the image within other resources.
   # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-imagebuilder-image.html
-  WindowServer2016WithVisualStudioCode:
+  WindowsServerWithVisualStudioCode:
     Type: AWS::ImageBuilder::Image
     Properties:
       ImageRecipeArn:
-        Ref: WindowsServer2016ImageRecipe
+        Ref: WindowsServerImageRecipe
       InfrastructureConfigurationArn:
-        Ref: WindowsServer2016ImageInfrastructureConfiguration
+        Ref: WindowsServerImageInfrastructureConfiguration
+      DistributionConfigurationArn:
+        Ref: WindowsServerImageDistributionConfiguration
 
-  # Create an SSM Parameter Store entry with our resulting ImageId.
-  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ssm-parameter.html
-  WindowServer2016WithVisualStudioCodeParameter:
-    Type: AWS::SSM::Parameter
+  # Publishes the resulting image ID to an SSM parameter for downstream
+  # consumers. The /imagebuilder/ parameter path matters: the service writes
+  # it through its service-linked role, whose ssm:PutParameter permission is
+  # scoped to that path. The parameter is service-managed rather than a stack
+  # resource, so deleting the stack doesn't delete it - the cleanup steps in
+  # the README do.
+  WindowsServerImageDistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
     Properties:
-      Description: Image Id for Window Server 2016 With Visual Studio Code
-      Name: /Test/Images/Windows_Server-2016-VisualStudioCode
-      Type: String
-      Value:
-        Fn::GetAtt: [WindowServer2016WithVisualStudioCode, ImageId]
+      Name: WindowsServer-VSCode-Image-Distribution-Configuration
+      Distributions:
+        - Region: !Ref AWS::Region
+          SsmParameterConfigurations:
+            - ParameterName: /imagebuilder/samples/windows-server-vscode
+              DataType: aws:ec2:image

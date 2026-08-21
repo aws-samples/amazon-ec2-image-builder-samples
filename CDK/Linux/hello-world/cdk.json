@@ -6,19 +6,20 @@
       {
         "name": "imagebuilder-example",
         "components": [
-          "arn:aws:imagebuilder:us-west-2:aws:component/update-linux/1.0.2",
+          "update-linux/x.x.x",
           "example-component"
         ],
         "instanceProfileName": "ImageBuilderInstanceProfile",
         "cfnImageRecipeName": "imagebuilder-example-recipe",
-        "version": "1.0.1",
+        "version": "1.0.x",
+        "runPipelineOnDeploy": false,
         "parentImage": {
-          "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
-          "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
-          "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
-          "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
-          "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-22-lts-x86/2025.12.12" },
-          "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-22-lts-x86/2025.12.12" }
+          "ap-southeast-2": { "amiID": "arn:aws:imagebuilder:ap-southeast-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+          "ap-southeast-1": { "amiID": "arn:aws:imagebuilder:ap-southeast-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+          "us-east-1": { "amiID": "arn:aws:imagebuilder:us-east-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+          "us-east-2": { "amiID": "arn:aws:imagebuilder:us-east-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+          "us-west-1": { "amiID": "arn:aws:imagebuilder:us-west-1:aws:image/ubuntu-server-24-lts-x86/x.x.x" },
+          "us-west-2": { "amiID": "arn:aws:imagebuilder:us-west-2:aws:image/ubuntu-server-24-lts-x86/x.x.x" }
         }
       }
     ]

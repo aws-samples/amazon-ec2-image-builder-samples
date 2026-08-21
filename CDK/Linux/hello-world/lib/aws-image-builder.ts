@@ -1,16 +1,8 @@
-import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
+import { Annotations, Aws, CfnMapping, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { ISecurityGroup } from 'aws-cdk-lib/aws-ec2';
 import {
-  Annotations,
-  Aws,
-  CfnMapping,
-  CustomResource,
-  Duration,
-  Stack,
-} from 'aws-cdk-lib';
-import { ISecurityGroup, IVpc } from 'aws-cdk-lib/aws-ec2';
-import {
+  AnyPrincipal,
   CfnInstanceProfile,
-  Effect,
   ManagedPolicy,
   PolicyStatement,
   Role,
@@ -18,17 +10,15 @@ import {
 } from 'aws-cdk-lib/aws-iam';
 import {
   CfnComponent,
+  CfnDistributionConfiguration,
+  CfnImage,
   CfnImagePipeline,
   CfnImageRecipe,
   CfnInfrastructureConfiguration,
 } from 'aws-cdk-lib/aws-imagebuilder';
-import { Runtime } from 'aws-cdk-lib/aws-lambda';
-import { RetentionDays } from 'aws-cdk-lib/aws-logs';
-import { IBucket } from 'aws-cdk-lib/aws-s3';
+import { Key } from 'aws-cdk-lib/aws-kms';
 import { ITopic, Topic } from 'aws-cdk-lib/aws-sns';
-import { EmailSubscription, LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
-import { StringParameter } from 'aws-cdk-lib/aws-ssm';
-import * as cr from 'aws-cdk-lib/custom-resources';
+import { EmailSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 
 export type ParentImage = Record<string, Record<string, any>>;
@@ -43,14 +33,10 @@ export interface AWSImageBuilderProps {
   instanceProfileName: string;
   version: string;
   imageBuilderComponentList: ImageBuilderComponent[];
-  amiIdSSMParameter: StringParameter;
-  vpc: IVpc;
+  runPipelineOnDeploy?: boolean;
 }
 export const instanceTypes = ['t3.large', 't3.xlarge'];
 
-export const HYPHEN = /-/gi;
-
-export const os_types = { LINUX: 'Linux' };
 export interface ImageBuilderComponent {
   /**
    * Name of the component
@@ -66,23 +52,18 @@ export interface ImageBuilderComponent {
   data?: string;
 }
 
-export interface SSMBuilderComponent {
-  name: string;
-  content: string;
-  documentType: string;
-  ssmDocumentName: string;
-}
-
 export interface PipelineConfig {
   name: string;
   components: string[];
   instanceProfileName: string;
   cfnImageRecipeName: string;
   version: string;
-  parentImage: Record<string, string>;
+  parentImage: ParentImage;
+  runPipelineOnDeploy?: boolean;
 }
 /**
- * Awsimage builder stack
+ * Provisions one Image Builder pipeline: recipe, infrastructure configuration,
+ * distribution configuration, SNS notifications, and the pipeline itself.
  */
 export class AWSImageBuilderConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AWSImageBuilderProps) {
@@ -99,14 +80,6 @@ export class AWSImageBuilderConstruct extends Construct {
     });
 
     const parentImageID: string = amiTable.findInMap(Stack.of(this).region, 'amiID');
-
-    //creates a the necessary policy for Imagebuilder to build EC2 image
-    imageBuilderRole.addToPolicy(
-      new PolicyStatement({
-        resources: ['*'],
-        actions: ['s3:PutObject'],
-      })
-    );
 
     //Adds SSM  Managed policy to role
     imageBuilderRole.addManagedPolicy(
@@ -125,7 +98,37 @@ export class AWSImageBuilderConstruct extends Construct {
         instanceProfileName: `${props.instanceProfileName}-${props.name}-${Aws.REGION}`,
       }
     );
-    const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {});
+    // Encrypts the notification topic. Image Builder publishes through its
+    // service-linked role, which the key policy must allow - the AWS managed
+    // SNS key's policy can't be edited to do that. The wildcard principal
+    // with the PrincipalArn condition grants exactly that role without
+    // requiring it to exist when the key is created (an account-root
+    // principal would only delegate to IAM policies, which the
+    // service-linked role doesn't have).
+    const notificationKey = new Key(this, `NotificationKey${props.name}`, {
+      description: 'Encrypts the Image Builder notification topic',
+      enableKeyRotation: true,
+      // Delete the key with the stack; the construct default retains it
+      // (and its monthly charge) after a destroy.
+      removalPolicy: RemovalPolicy.DESTROY,
+      pendingWindow: Duration.days(7),
+    });
+    notificationKey.addToResourcePolicy(
+      new PolicyStatement({
+        sid: 'AllowImageBuilderNotifications',
+        principals: [new AnyPrincipal()],
+        actions: ['kms:GenerateDataKey*', 'kms:Decrypt'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: {
+            'aws:PrincipalArn': `arn:${Aws.PARTITION}:iam::${Aws.ACCOUNT_ID}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder`,
+          },
+        },
+      })
+    );
+    const notificationTopic = new Topic(this, 'ImgBuilderNotificationTopic', {
+      masterKey: notificationKey,
+    });
 
     const terminationConfig = props.debug ? false : true;
     //Manage Infrastructure configurations
@@ -148,8 +151,11 @@ export class AWSImageBuilderConstruct extends Construct {
         component.managedComponentArn ??
         new CfnComponent(this, `${component.name}`, {
           name: `${component.name}-${props.name}`,
-          platform: os_types.LINUX,
-          version: props.version,
+          platform: 'Linux',
+          // Components take a fixed semantic version - unlike recipes, they
+          // reject x wildcards. Content changes reuse this version and the
+          // service increments the build version (1.0.0/1, 1.0.0/2, ...).
+          version: '1.0.0',
           data: `${component.data}`,
         }).attrArn,
     }));
@@ -165,78 +171,65 @@ export class AWSImageBuilderConstruct extends Construct {
           ebs: {
             deleteOnTermination: terminationConfig,
             volumeSize: props.storageSize ?? 128,
-            volumeType: 'gp2',
+            volumeType: 'gp3',
           },
           noDevice: '',
         },
       ],
     });
 
-    const cfnImageBuilderPipeline = new CfnImagePipeline(
+    const cfnDistributionConfiguration = new CfnDistributionConfiguration(
+      this,
+      `cfnDistributionConfiguration${props.name}`,
+      {
+        name: `distributionConfiguration-${props.name}`,
+        distributions: [
+          {
+            region: Stack.of(this).region,
+            amiDistributionConfiguration: {
+              Name: `${props.name}-{{ imagebuilder:buildDate }}`,
+            },
+            // Image Builder writes the output AMI ID here on every build.
+            // The /imagebuilder/ path matters: the service-linked role's
+            // ssm:PutParameter permission is scoped to it, so parameters
+            // elsewhere need a custom execution role instead.
+            ssmParameterConfigurations: [
+              {
+                parameterName: `/imagebuilder/${props.name}/latest-ami`,
+                dataType: 'aws:ec2:image',
+              },
+            ],
+          },
+        ],
+      }
+    );
+
+    const cfnImagePipeline = new CfnImagePipeline(
       this,
       `imageBuilderPipeline${props.name}`,
       {
         name: `imageBuilderPipeline${props.name}`,
         infrastructureConfigurationArn: cfnInfrastructureConfiguration.attrArn,
         imageRecipeArn: cfnImageRecipe.attrArn,
+        distributionConfigurationArn: cfnDistributionConfiguration.attrArn,
       }
     );
-    const imagebuilderCr = new PythonFunction(this, 'imagebuilderCr', {
-      entry: 'lib/lambda/imagebuilder',
-      runtime: Runtime.PYTHON_3_12,
-      index: 'app.py',
-      handler: 'lambda_handler',
-      environment: {
-        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
-      },
-      timeout: Duration.seconds(45),
-      initialPolicy: [
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: ['imagebuilder:StartImagePipelineExecution'],
-          resources: [
-            `arn:${Aws.PARTITION}:imagebuilder:${Stack.of(this).region}:${
-              Stack.of(this).account
-            }:image/*`,
-            `arn:${Aws.PARTITION}:imagebuilder:${Stack.of(this).region}:${
-              Stack.of(this).account
-            }:image-pipeline/*`,
-          ],
-        }),
-      ],
-    });
 
-    imagebuilderCr.node.addDependency(cfnImageBuilderPipeline);
+    if (props.runPipelineOnDeploy) {
+      // Runs the pipeline as part of the deployment. The deployment waits
+      // for the image to reach AVAILABLE, typically 15 to 30 minutes. The
+      // deployment ID changes whenever the pipeline's configuration changes,
+      // so with onUpdate those updates run the pipeline again and build a
+      // fresh image.
+      new CfnImage(this, `pipelineImage${props.name}`, {
+        imagePipelineExecutionSettings: {
+          deploymentId: cfnImagePipeline.attrDeploymentId,
+          onUpdate: true,
+        },
+      });
+    }
 
-    const pipelineTriggerCrProvider = new cr.Provider(this, 'pipelineTriggerCrProvider', {
-      onEventHandler: imagebuilderCr,
-      logRetention: RetentionDays.ONE_DAY,
-    });
-
-    new CustomResource(this, id, {
-      serviceToken: pipelineTriggerCrProvider.serviceToken,
-      properties: {
-        PIPELINE_ARN: cfnImageBuilderPipeline.attrArn,
-      },
-    });
-    const amiIdRecorder = new PythonFunction(this, 'imageRecorder', {
-      entry: 'lib/lambda/recorder',
-      runtime: Runtime.PYTHON_3_12,
-      index: 'app.py',
-      handler: 'lambda_handler',
-      environment: {
-        IMAGE_SSM_NAME: props.amiIdSSMParameter.parameterName,
-      },
-    });
-
-    props.amiIdSSMParameter.grantRead(amiIdRecorder);
-    props.amiIdSSMParameter.grantWrite(amiIdRecorder);
-
-    notificationTopic.addSubscription(new LambdaSubscription(amiIdRecorder));
     this.subscribeEmails(notificationTopic);
-
-    cfnInfrastructureConfiguration.addDependsOn(instanceProfile);
-    cfnImageBuilderPipeline.addDependsOn(cfnInfrastructureConfiguration);
   }
 
   private subscribeEmails(notificationTopic: ITopic) {

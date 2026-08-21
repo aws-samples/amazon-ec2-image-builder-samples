@@ -1,0 +1,46 @@
+---
+# Keeps the root README's sample index honest: every sample directory in the
+# tree must appear as a link target in the index.
+name: README index
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  readme-index:
+    name: README indexes every sample
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - name: Check the sample index
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          readme = open('README.md').read()
+          missing = []
+          for root, dirs, files in os.walk('.'):
+              dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'node_modules']
+              if root == '.':
+                  continue
+              # a sample is a directory with a README plus other files
+              if 'README.md' in files and len(files) > 1:
+                  rel = root[2:]
+                  if f']({rel}/)' not in readme and f']({rel})' not in readme:
+                      missing.append(rel)
+                  dirs[:] = []  # don't descend into a sample's own subfolders
+          if missing:
+              print('Samples missing from the README index:')
+              print('\n'.join(missing))
+              sys.exit(1)
+          print('index complete')
+          PY

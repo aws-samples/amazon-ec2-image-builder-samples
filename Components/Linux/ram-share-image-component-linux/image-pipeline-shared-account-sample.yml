@@ -36,7 +36,7 @@ Parameters:
 
   BaseImage:
     Type: String
-    Default: amazon-linux-2-x86/x.x.x
+    Default: amazon-linux-2023-x86/x.x.x
 
   AppAccountId:
     Description: ImageBuilder will share the image with the AWS Account ID of application account entered here
@@ -44,100 +44,14 @@ Parameters:
     AllowedPattern: ^\d{12}$
     ConstraintDescription: 12 Digit Account number of the App Account
 
-  AdminPermissionSetName:
+  KeyAdminRoleArn:
     Type: String
-    Description: PermissionSet deployed via AWS SSO that will be used as an administrator for the AWS KMS customer managed key
-    Default: AWSAdministratorAccess
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:iam::\d{12}:role/.+'
+    # KMS key policies accept principals from any account - a foreign-account
+    # ARN pasted here would grant key administration outside this account
+    Description: ARN of an IAM role in this account (the account you deploy this stack to) that will administer the AWS KMS customer managed key
 
 Resources:
-  GetSSORoleArnRole:
-    Type: AWS::IAM::Role
-    Properties:
-      Path: /
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - !Sub lambda.${AWS::URLSuffix}
-            Action:
-              - sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: Lambda
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action:
-                  - iam:ListRoles
-                Resource: '*'
-
-  GetSSORoleArnLambda:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: Get-Account-AdminSSORoleArn
-      Runtime: python3.12
-      Handler: index.handler
-      MemorySize: 128
-      Role: !GetAtt GetSSORoleArnRole.Arn
-      Timeout: 60
-      Environment:
-        Variables:
-          ADMIN_PERMISSION_SET: !Ref AdminPermissionSetName
-      Code:
-        ZipFile: |
-          import os
-          import traceback
-          import boto3
-          import cfnresponse
-          ADMIN_PERMISSION_SET = os.environ['ADMIN_PERMISSION_SET']
-          iam = boto3.client('iam')
-
-          def handler(event, context):
-            print(f'event is {event}')
-            response_payload = {}
-            response_status = cfnresponse.FAILED
-            physical_resource_id = 'ssoadmin'
-            arn = None
-            try:
-              if event['RequestType'] == 'Delete':
-                # Nothing to delete:
-                response_status = cfnresponse.SUCCESS
-              elif event['RequestType'] in ('Create', 'Update'):
-                resource_properties = event['ResourceProperties']
-                # Get SSO Admin Role:
-                paginator = iam.get_paginator('list_roles')
-
-                for page in paginator.paginate():
-                  for role in page['Roles']:
-                    if(f'AWSReservedSSO_{ADMIN_PERMISSION_SET}' in role.get('Arn')):
-                      arn = role['Arn']
-                if arn:
-                  response_payload['SSOAdminArn'] = arn
-                  response_status = cfnresponse.SUCCESS
-                else:
-                  print(f'SSOAdminArn: {ADMIN_PERMISSION_SET} passed was not found')
-                  response_payload['SSOAdminArn'] = None
-                  response_status = cfnresponse.FAILED
-            except Exception as e:
-              print('ERROR: Caught exception:')
-              print(e)
-              traceback.print_exc()
-              response_payload['SSOAdminArn'] = None
-              response_status = cfnresponse.FAILED
-            finally:
-              print('Sending cfn response')
-              cfnresponse.send(event, context, response_status,
-                              response_payload, physical_resource_id)
-  AdminSSORoleArn:
-    Type: Custom::GetSSOAdminRole
-    DependsOn: GetSSORoleArnLambda
-    Properties:
-      ServiceToken: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:Get-Account-AdminSSORoleArn
-
   ImageEncryptionKMSKey:
     Type: AWS::KMS::Key
     Metadata:
@@ -149,7 +63,6 @@ Resources:
           ignore_reasons:
             - EIAMPolicyWildcardResource: Condition specified
             - EIAMPolicyActionWildcard: Condition specified
-    DependsOn: EC2IBRole
     Properties:
       Description: A Symmetric KMS To Be used for Image Encryption
       EnableKeyRotation: true
@@ -163,10 +76,24 @@ Resources:
               AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:root
             Action: kms:*
             Resource: '*'
+          # Lets Image Builder's service-linked role publish to the
+          # encrypted topic. Wildcard principal + PrincipalArn condition
+          # grants the role without requiring it to exist yet.
+          - Sid: AllowImageBuilderNotifications
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:PrincipalArn: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/imagebuilder.amazonaws.com/AWSServiceRoleForImageBuilder'
           - Sid: Allow administration of the key
             Effect: Allow
             Principal:
-              AWS: !GetAtt AdminSSORoleArn.SSOAdminArn
+              AWS: !Ref KeyAdminRoleArn
             Action:
               - kms:Create*
               - kms:Describe*
@@ -221,6 +148,10 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ImageBuilderSNSTopicName
+      # The sample's key also encrypts the notification topic - its policy
+      # includes the statement granting Image Builder's service-linked role
+      # use of the key for publishing.
+      KmsMasterKeyId: !GetAtt ImageEncryptionKMSKey.Arn
 
   ImageBuilderSNSPolicy:
     Metadata:
@@ -258,7 +189,7 @@ Resources:
         - Sid: allow-imagebuilderservice-id
           Effect: Allow
           Principal:
-            Service: !Sub imagebuilder.${AWS::URLSuffix}
+            Service: imagebuilder.amazonaws.com
           Action: sns:Publish
           Resource: !Ref ImageBuilderSNSTopic
       Topics:
@@ -323,15 +254,24 @@ Resources:
   AmznLinuxImageRecipe:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
-      Name: AmznLinux2-ImageRecipe-Shared
-      Version: 1.0.0
+      # Referenced by name in the app-account template and the RAM share -
+      # lowercase because Image Builder lowercases recipe names in ARNs
+      Name: al2023-imagerecipe-shared
+      # x auto-increments the build version on recipe replacement
+      Version: 1.0.x
       ParentImage: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${BaseImage}
-      Description: Image Recipe for AmznLinux2 Server Images
+      Description: Image Recipe for Amazon Linux 2023 Server Images
+      # No CLI or OS-update components: AL2023 ships the AWS CLI v2
+      # preinstalled, and OS updates come from consuming the latest base AMI
+      # release (the x.x.x parent reference above) rather than in-place
+      # patching.
       Components:
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/aws-cli-version-2-linux/x.x.x
         - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/python-3-linux/x.x.x
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x
-        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux-high/x.x.x
+        - ComponentArn: !Sub arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/stig-build-linux/x.x.x
+          Parameters:
+            # Low and Medium are the other profiles
+            - Name: Level
+              Value: [High]
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -342,7 +282,7 @@ Resources:
             VolumeSize: 30
       WorkingDirectory: /opt
       Tags:
-        ParentOS: AmznLinux2
+        ParentOS: AL2023
 
   InfraConfig:
     Type: AWS::ImageBuilder::InfrastructureConfiguration

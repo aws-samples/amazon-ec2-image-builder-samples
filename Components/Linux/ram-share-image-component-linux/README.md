@@ -9,10 +9,10 @@ This sample demonstrates how a child account can reference an image using a [ver
 
 ![EC2 Image Sharing](./EC2ImageBuilder-Sharing.png)
 
-The sample CloudFromation templates creates a resource share via AWS Resource Access Manager (RAM) to share an image to an AWS Organization. It uses a Lambda Function that subscribes to the Amazon Simple Notification Service (SNS) topic to update the resource share with the latest available image.
+The sample CloudFormation templates creates a resource share via AWS Resource Access Manager (RAM) to share an image to an AWS Organization. It uses a Lambda Function that subscribes to the Amazon Simple Notification Service (SNS) topic to update the resource share with the latest available image.
 
-An AWS Key Management Service (KMS) customer managed key is used to encrypt the image, and the key is shared with the child accounts.
-Access to administer the AWS KMS customer managed key is provided for the AWS_AdministratorAccess Role created in the account by the AWS Single Sign-On (AWS SSO) permission set.
+An AWS Key Management Service (KMS) customer managed key is used to encrypt the image, and the key is shared with the child accounts. The same key also encrypts the shared account's SNS notification topic; the app-account template creates its own key for its topic.
+Access to administer the AWS KMS customer managed key is granted to an IAM role you name through the key administrator parameter - pass a role that key administrators in your account actually use.
 
 The child account can reference the image dynamically to ensure the latest image is used without needing to hard code the ImageId of the shared image.
 

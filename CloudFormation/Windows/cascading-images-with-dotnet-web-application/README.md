@@ -48,7 +48,7 @@ The second will download the compressed .NET web application from S3, and instal
 
 ## Walkthrough
 
-It takes approximately 120-150 minutes to complete the walkthrough.
+The walkthrough typically takes 1.5 to 2.5 hours end to end - each of the two image builds runs 30 to 90 minutes depending on how many Windows updates the base image needs.
 
 This solution can be deployed using both the AWS Management Console or the Command Line Interface (CLI).
 
@@ -56,37 +56,33 @@ Before deploying the stacks, a .NET web application must first be created and up
 
 ### Creating the .NET web application
 
-First, install the latest .NET SDK from the [Download .NET 5.0](https://dotnet.microsoft.com/download/dotnet/5.0) website.
+First, install the latest .NET SDK from the [Download .NET](https://dotnet.microsoft.com/download) website.
 
 Next, create a .NET web application. As this is a sample, we will not be using https, although that is recommended for production use.
 
 ```shell
-dotnet new webApp -o sample-web-application --no-https
+dotnet new webapp -o sample-web-application --no-https
 cd sample-web-application
 ```
 
-The ```Program.cs``` file needs to be updated to listen on all network interfaces. For example, the following addition will enable the application to listen on TCP/5000.
-
-In the `Program.cs` file, add ```webBuilder.UseUrls("http://*:5000");``` after the `UserStartup<>` line. The `CreateDefaultBuilder` should include content similar to this:
+The application needs to listen on all network interfaces rather than localhost only. In `Program.cs`, add the following before `app.Run()` so the application listens on TCP/5000:
 
 ```cs
-                .ConfigureWebHostDefaults(webBuilder =>
-                {
-                    webBuilder.UseStartup<Startup>();
-                    webBuilder.UseUrls("http://*:5000");
-                });
+app.Urls.Add("http://*:5000");
 ```
 
 Next, the .NET application needs to be compiled for Windows.
 
 ```shell
-dotnet publish --configuration release --runtime win-x64
+dotnet publish --configuration release --runtime win-x64 --self-contained true
 ```
 
-The compiled application should exist in the ```./bin/release/net5.0/win-x64/publish``` folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.zip``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.
+The `--self-contained true` flag bundles the .NET runtime with the application. This matters because the baseline image doesn't include the .NET runtime - a framework-dependent publish produces a service that can't start.
+
+The compiled application should exist in the ```./bin/release/<framework>/win-x64/publish``` (where `<framework>` matches your SDK version, for example `net8.0`) folder. The next step is to compress the files and upload them to an existing S3 Bucket. The following commands will create a ```.zip``` file, and using the AWS CLI, upload it to an S3 Bucket. Note, the S3 Bucket name needs to be updated.
 
 ```shell
-cd bin/release/net5.0/win-x64/publish
+cd bin/release/<framework>/win-x64/publish
 zip -r ~/sample-web-application.zip .
 aws s3 cp ~/sample-web-application.zip s3://< Insert your bucket name here >/sample-web-application.zip
 ```
@@ -104,7 +100,7 @@ After deploying the baseline stack, the pipeline must be executed to create the 
 **Note:** Replace ```windows-baseline-stack``` with ```windows-dotnet-application-stack``` when deploying the .NET application stack.
 
 1. Upload the ```windows-baseline-stack.yml``` template to CloudFormation.
-2. Update the stack parameters as desired, ensuring the ```DotnetS3SourceTarFile``` parameter in the second stack points to the S3 location used when uploading the .NET web application to S3.
+2. Update the stack parameters as desired, ensuring the ```DotnetS3SourceZipFile``` parameter in the second stack points to the S3 location used when uploading the .NET web application to S3.
 3. You will see a checkbox informing you that the stack creates IAM resources. Read and check the box.
 4. Wait for the stack to build.
 5. Once built, a new Image Builder pipeline will exist. You can view this in the Image Builder console, and optionally trigger a manual execution of the pipeline to start the first image creation.

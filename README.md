@@ -1,6 +1,6 @@
 # Amazon EC2 Image Builder Samples
 
-Working samples for [Amazon EC2 Image Builder](https://aws.amazon.com/image-builder/): CloudFormation templates, CDK applications, AWSTOE components, and container build scripts. Each sample is self-contained with its own README.
+Working samples for [Amazon EC2 Image Builder](https://aws.amazon.com/image-builder/): CloudFormation templates, CDK applications, and AWSTOE components. Each sample is self-contained with its own README.
 
 This repository is maintained by the EC2 Image Builder service team. Samples are provided as-is - we review issues and pull requests on a best-effort basis.
 
@@ -10,7 +10,7 @@ New to Image Builder? Build your first image from the console using the [Get sta
 
 From there:
 
-1. [CloudFormation/Linux/amazon-linux-2-with-latest-ssm-agent](CloudFormation/Linux/amazon-linux-2-with-latest-ssm-agent/) - a minimal one-shot AMI build in a single CloudFormation template (no pipeline - the CDK sample below adds one).
+1. [CloudFormation/install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) - a minimal one-shot AMI build in a single CloudFormation template (no pipeline - the CDK sample below adds one), in Amazon Linux 2023, Ubuntu, and Windows Server flavors.
 2. [CDK/Linux/hello-world](CDK/Linux/hello-world/) - the same concepts in CDK, driven by a JSON configuration that supports multiple pipelines.
 3. [CloudFormation/Windows/cascading-images-with-dotnet-web-application](CloudFormation/Windows/cascading-images-with-dotnet-web-application/) - the "golden image hierarchy" pattern: a baseline image pipeline feeding an application image pipeline.
 
@@ -21,17 +21,15 @@ From there:
 | Sample | What it shows |
 |---|---|
 | [amazon-linux-2023-attestable-image](CloudFormation/Linux/amazon-linux-2023-attestable-image/) | Attestable AL2023 AMIs with dm-verity and NitroTPM PCR measurements, built with custom image workflows |
-| [amazon-linux-2-with-latest-ssm-agent](CloudFormation/Linux/amazon-linux-2-with-latest-ssm-agent/) | Installing the latest SSM Agent before the build starts, using `UserDataOverride` |
-| [ubuntu-2004-with-latest-ssm-agent](CloudFormation/Linux/ubuntu-2004-with-latest-ssm-agent/) | The same pre-build SSM Agent pattern for Ubuntu |
-| [ubuntu-with-net6](CloudFormation/Linux/ubuntu-with-net6/) | Attaching the AWS managed .NET SDK component to an Ubuntu AMI recipe |
+| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Updating the SSM Agent to the latest release during the build, using the Amazon-managed agent-update workflow - Amazon Linux 2023, Ubuntu 24.04, and Windows Server 2025 variants |
 
 ### CloudFormation - Windows AMIs
 
 | Sample | What it shows |
 |---|---|
 | [cascading-images-with-dotnet-web-application](CloudFormation/Windows/cascading-images-with-dotnet-web-application/) | Golden image hierarchy - a baseline Windows image stack whose exported Image ARN feeds an application image stack; NSSM-managed Windows service |
-| [windows-server-2016-with-vscode](CloudFormation/Windows/windows-server-2016-with-vscode/) | A custom component with build, validate, and test phases that installs an application (VS Code) on Windows |
-| [windows-server-with-latest-ssm-agent](CloudFormation/Windows/windows-server-with-latest-ssm-agent/) | Pre-build SSM Agent installation on Windows via `UserDataOverride` (PowerShell) |
+| [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Updating the SSM Agent to the latest release during the build - the Windows Server 2025 variant of the multi-OS sample listed under Linux AMIs |
+| [windows-server-with-vscode](CloudFormation/Windows/windows-server-with-vscode/) | A custom component with build, validate, and test phases that installs an application (VS Code) on Windows Server 2025 |
 
 ### CloudFormation - container images
 
@@ -52,28 +50,19 @@ From there:
 
 | Sample | Platform | What it shows |
 |---|---|---|
-| [ansible-playbook-execution-amazon-linux-2](Components/Linux/ansible-playbook-execution-amazon-linux-2/) | Linux | Running an Ansible playbook from S3 inside a build component |
+| [ansible-playbook-execution-linux](Components/Linux/ansible-playbook-execution-linux/) | Linux | Running an Ansible playbook from S3 inside a build component (Amazon Linux 2023) |
 | [chef-recipe-execution-linux](Components/Linux/chef-recipe-execution-linux/) | Linux | Running Chef recipes in local mode, with install handled by the omnitruck script |
-| [inspec-recipe-execution-linux](Components/Linux/inspec-recipe-execution-linux/) | Linux | A test-phase-only component: run InSpec compliance tests and upload the report to S3 |
-| [orca-security-scan-test-component-linux](Components/Linux/orca-security-scan-test-component-linux/) | Linux | A third-party (Orca Security) vulnerability scan as a test component |
 | [ram-share-image-component-linux](Components/Linux/ram-share-image-component-linux/) | Linux | Multi-account golden image distribution using AWS RAM and a versionless cross-account image ARN as the parent image |
-| [wordpress-recipes-linux](Components/Linux/wordpress-recipes-linux/) | Linux | Progressive components baking a WordPress stack into an AMI |
-| [chef-recipe-execution-windows](Components/Windows/chef-recipe-execution-windows/) | Windows | The Chef pattern, PowerShell variant |
 | [configure-wsus-server](Components/Windows/configure-wsus-server/) | Windows | Pointing Windows Update at a WSUS server via the registry - useful for isolated-subnet builds |
 | [create-local-user](Components/Windows/create-local-user/) | Windows | Creating a local Windows user with the password pulled from Secrets Manager at build time - no secrets in the component document |
-| [inspec-recipe-execution-windows](Components/Windows/inspec-recipe-execution-windows/) | Windows | InSpec compliance testing in the test phase on Windows |
 
-### Containers
+### Moved samples
 
-| Sample | What it shows |
-|---|---|
-| [Containers/Scripts](Containers/Scripts/) | Reproducing an Image Builder container build locally for debugging - fetches your container recipe, renders the Dockerfile template, and runs the component with AWSTOE |
+Renamed or consolidated - update your links:
 
-### Lambda
-
-| Sample | What it shows |
-|---|---|
-| [lambda/latest_image_tracker](lambda/latest_image_tracker/) | SNS-triggered Lambda that keeps a "latest AMI" SSM parameter updated after each build. Note: Image Builder distribution configurations can now [write output AMI IDs to SSM parameters natively](https://docs.aws.amazon.com/imagebuilder/latest/userguide/cr-upd-ami-distribution-settings.html) - prefer that for new work |
+- **amazon-linux-2-with-latest-ssm-agent**, **ubuntu-2004-with-latest-ssm-agent**, and **windows-server-with-latest-ssm-agent** are now one sample: [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/).
+- **ansible-playbook-execution-amazon-linux-2** is now [ansible-playbook-execution-linux](Components/Linux/ansible-playbook-execution-linux/), updated for Amazon Linux 2023.
+- **windows-server-2016-with-vscode** is now [windows-server-with-vscode](CloudFormation/Windows/windows-server-with-vscode/), updated for Windows Server 2025.
 
 ## Which IAM role does what
 
