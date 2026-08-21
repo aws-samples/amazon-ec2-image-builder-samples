@@ -10,11 +10,19 @@ New to Image Builder? Build your first image from the console using the [Get sta
 
 From there:
 
-1. [CloudFormation/install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) - a minimal one-shot AMI build in a single CloudFormation template (no pipeline - the CDK sample below adds one), in Amazon Linux 2023, Ubuntu, and Windows Server flavors.
-2. [CDK/Linux/hello-world](CDK/Linux/hello-world/) - the same concepts in CDK, driven by a JSON configuration that supports multiple pipelines.
+1. [quick-start](quick-start/) - the smallest complete image pipeline, as one CloudFormation template and as a CDK app on the L2 constructs. Start with this one.
+2. [CloudFormation/install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) - a minimal one-shot AMI build (no pipeline), in Amazon Linux 2023, Ubuntu, and Windows Server flavors.
 3. [CloudFormation/Windows/cascading-images-with-dotnet-web-application](CloudFormation/Windows/cascading-images-with-dotnet-web-application/) - the "golden image hierarchy" pattern: a baseline image pipeline feeding an application image pipeline.
+4. [distribution/cross-account-amis](distribution/cross-account-amis/) - encrypted AMI copies delivered to other accounts, with the KMS key policy and target-account role done right.
 
 ## Sample index
+
+### Use-case kits
+
+| Sample | What it shows |
+|---|---|
+| [quick-start](quick-start/) | The smallest complete pipeline - CloudFormation and CDK (`@aws-cdk/aws-imagebuilder-alpha` L2) variants side by side, x-wildcard auto-versioning throughout, and an arm64 toggle |
+| [distribution/cross-account-amis](distribution/cross-account-amis/) | Cross-account AMI distribution: a CMK with a least-privilege key policy, the target-account role, and per-account SSM parameters holding each account's AMI ID |
 
 ### CloudFormation - Linux AMIs
 
