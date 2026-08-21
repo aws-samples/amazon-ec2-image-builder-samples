@@ -1,0 +1,240 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder sample: build an Amazon Linux 2023 image encrypted with a
+  customer managed KMS key and distribute a copy of the AMI to other accounts.
+  Deploy this template in the source (image-building) account, and
+  target-account.yml once in every account listed in TargetAccountIds, before
+  running the pipeline.
+
+Parameters:
+  TargetAccountIds:
+    Type: CommaDelimitedList
+    Description: >-
+      Account IDs that receive their own copy of the output AMI. Each account
+      needs the EC2ImageBuilderDistributionCrossAccountRole from
+      target-account.yml before the pipeline runs.
+    AllowedPattern: ^\d{12}$
+    ConstraintDescription: Each entry must be a 12-digit AWS account ID.
+
+Resources:
+  # Encrypts the image and every copy distributed to the target accounts. A
+  # customer managed key is required here: target accounts can never be
+  # granted use of this account's EBS default key.
+  ImageEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts AMIs built by the cross-account distribution sample
+      EnableKeyRotation: true
+      # Shortest deletion window KMS allows (7-30 days), so stack cleanup
+      # releases the key as quickly as possible.
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Keeps this account in control of the key: IAM policies in the
+          # account (including the Image Builder service-linked role's) can
+          # grant access, and the key can't become unmanageable.
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          # The build path: the build instance reads and writes EBS volumes
+          # encrypted with this key.
+          - Sid: AllowBuildInstanceUseOfTheKey
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt InstanceRole.Arn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+          # Grants each target ACCOUNT use of the key - deliberately wider
+          # than the distribution role, because copies stay encrypted with
+          # this key, so every principal that launches instances from a copy
+          # needs it too. Bare account IDs resolve to each account's root.
+          - Sid: AllowTargetAccountUseOfTheKey
+            Effect: Allow
+            Principal:
+              AWS: !Ref TargetAccountIds
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+          # EC2 and EBS in the target accounts create grants on this key when
+          # instances launch from the copied AMI. GrantIsForAWSResource limits
+          # that to grants AWS services create on the caller's behalf -
+          # removing the condition lets any principal in a target account hand
+          # out arbitrary grants on this key.
+          - Sid: AllowTargetAccountGrantsForAWSResources
+            Effect: Allow
+            Principal:
+              AWS: !Ref TargetAccountIds
+            Action:
+              - kms:CreateGrant
+              - kms:ListGrants
+              - kms:RevokeGrant
+            Resource: '*'
+            Condition:
+              Bool:
+                kms:GrantIsForAWSResource: true
+
+  KeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/cross-account-distribution-sample
+      TargetKeyId: !Ref ImageEncryptionKey
+
+  # The build instance profile. The two managed policies are the supported
+  # baseline for Image Builder build instances.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - !Sub 'ec2.${AWS::URLSuffix}'
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: cross-account-distribution-sample
+      InstanceProfileName: !Ref InstanceProfile
+      # Without a default VPC, or to use a different VPC, set a subnet and the
+      # security groups to use with it:
+      # SubnetId: subnet-...
+      # SecurityGroupIds: [sg-...]
+
+  # Pre-creating the log group lets the stack own its retention and cleanup.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/cross-account-distribution-sample
+      RetentionInDays: 7
+
+  # Components take a fixed version - when the document changes, the service
+  # increments the build number behind the same version (1.0.0/1, 1.0.0/2,
+  # ...), so updates deploy without editing this value.
+  BuildInfoComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: cross-account-sample-build-info
+      Version: 1.0.0
+      Platform: Linux
+      Description: Writes a marker file used to verify the AMI in target accounts.
+      Data: |
+        name: cross-account-sample-build-info
+        description: Writes a marker file used to verify the AMI in target accounts.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: WriteBuildInfo
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - echo "Built by the EC2 Image Builder cross-account distribution sample" > /etc/cross-account-sample-release
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: cross-account-distribution-sample
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair
+      Version: 1.0.x
+      # x.x.x resolves to the latest version of the managed parent image at
+      # build time, so each build starts from the current base release.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !Ref BuildInfoComponent
+      # The explicit root mapping is what ties the image to the customer
+      # managed key. Omitting it silently encrypts the root volume with the
+      # account's EBS default key instead of this key, and cross-account
+      # distribution of the AMI then fails.
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            KmsKeyId: !GetAtt ImageEncryptionKey.Arn
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: cross-account-distribution-sample
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'cross-account-sample-{{ imagebuilder:buildDate }}'
+            # TargetAccountIds copies the AMI: each target account gets its
+            # own AMI and snapshots that it fully owns. This is distinct from
+            # LaunchPermissionConfiguration (deliberately omitted here), which
+            # would let target accounts launch the source-owned AMI instead.
+            TargetAccountIds: !Ref TargetAccountIds
+            # Encrypts every copy with the customer managed key. Without this,
+            # copies fall back to the EBS default key and target accounts
+            # can't use them. The full key ARN is required: the target account
+            # resolves this value during its copy, and a bare key ID only
+            # resolves in the key's own account.
+            KmsKeyId: !GetAtt ImageEncryptionKey.Arn
+          # Image Builder writes these parameters after distribution, each in
+          # the account named by the entry. They aren't stack resources, so
+          # deleting the stack doesn't delete them (see the README cleanup).
+          SsmParameterConfigurations:
+            # No AmiAccountId: written in this (source) account with the
+            # source AMI ID.
+            - ParameterName: /imagebuilder/cross-account-sample/source-ami
+              DataType: aws:ec2:image
+            # AmiAccountId picks WHICH account's copied AMI ID lands in the
+            # parameter, and the parameter is written in that account through
+            # its EC2ImageBuilderDistributionCrossAccountRole. One entry per
+            # target account - this covers the first; duplicate it for others.
+            - ParameterName: /imagebuilder/cross-account-sample/target-ami
+              DataType: aws:ec2:image
+              AmiAccountId: !Select [0, !Ref TargetAccountIds]
+
+  # No Schedule: the pipeline is run manually (see the README) so the
+  # target-account roles can be in place before the first distribution.
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: cross-account-distribution-sample
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+
+Outputs:
+  KmsKeyArn:
+    Description: Pass this to target-account.yml as SourceKmsKeyArn.
+    Value: !GetAtt ImageEncryptionKey.Arn
+  ImagePipelineArn:
+    Description: Run this pipeline once every target-account role is deployed.
+    Value: !Ref ImagePipeline
