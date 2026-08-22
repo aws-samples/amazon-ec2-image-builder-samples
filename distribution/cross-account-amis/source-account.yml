@@ -111,7 +111,7 @@ Resources:
             Effect: Allow
             Principal:
               Service:
-                - !Sub 'ec2.${AWS::URLSuffix}'
+                - ec2.amazonaws.com
       Path: /executionServiceEC2Role/
 
   InstanceProfile:
