@@ -133,8 +133,8 @@ Resources:
       Name: quick-start-cfn-build-info
       # Components don't accept x wildcards. Keep the version fixed - when the
       # document changes, the service increments the build number behind the
-      # same version (1.0.0/1, 1.0.0/2, ...), so updates deploy without
-      # editing this value.
+      # same version (1.0.0/1, 1.0.0/2, ...), and the recipe's LatestVersion
+      # reference picks that up without editing this value.
       Version: 1.0.0
       Platform: Linux
       Description: >-
@@ -185,7 +185,7 @@ Resources:
       # created by this stack.
       Components:
         - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
-        - ComponentArn: !Ref BuildInfoComponent
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
 
   InfrastructureConfiguration:
     Type: AWS::ImageBuilder::InfrastructureConfiguration

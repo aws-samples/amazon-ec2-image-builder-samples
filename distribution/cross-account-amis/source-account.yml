@@ -142,7 +142,8 @@ Resources:
 
   # Components take a fixed version - when the document changes, the service
   # increments the build number behind the same version (1.0.0/1, 1.0.0/2,
-  # ...), so updates deploy without editing this value.
+  # ...), and the recipe's LatestVersion reference picks that up without
+  # editing this value.
   BuildInfoComponent:
     Type: AWS::ImageBuilder::Component
     Properties:
@@ -174,7 +175,7 @@ Resources:
       # build time, so each build starts from the current base release.
       ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
       Components:
-        - ComponentArn: !Ref BuildInfoComponent
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
       # The explicit root mapping is what ties the image to the customer
       # managed key. Omitting it silently encrypts the root volume with the
       # account's EBS default key instead of this key, and cross-account
