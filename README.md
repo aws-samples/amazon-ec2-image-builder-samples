@@ -23,6 +23,7 @@ From there:
 |---|---|
 | [quick-start](quick-start/) | The smallest complete pipeline - CloudFormation and CDK (`@aws-cdk/aws-imagebuilder-alpha` L2) variants side by side, x-wildcard auto-versioning throughout, and an arm64 toggle |
 | [distribution/cross-account-amis](distribution/cross-account-amis/) | Cross-account AMI distribution: a CMK with a least-privilege key policy, the target-account role, and per-account SSM parameters holding each account's AMI ID |
+| [golden-ami-pipeline](golden-ami-pipeline/) | The golden-AMI loop end to end: monthly patching from an SSM-parameter base, launch template promotion, an instance refresh that automatically moves the running Auto Scaling group onto each new AMI, and build events turned into readable pass/fail notifications |
 
 ### CloudFormation - Linux AMIs
 
