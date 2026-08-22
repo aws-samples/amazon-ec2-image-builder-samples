@@ -1,0 +1,30 @@
+{
+  "name": "keep-last-n",
+  "description": "Keep the 5 newest images per recipe version",
+  "status": "ENABLED",
+  "executionRole": "arn:aws:iam::111122223333:role/LifecycleExecutionRole",
+  "resourceType": "AMI_IMAGE",
+  "policyDetails": [
+    {
+      "action": {
+        "type": "DELETE",
+        "includeResources": {
+          "amis": true,
+          "snapshots": true
+        }
+      },
+      "filter": {
+        "type": "COUNT",
+        "value": 5
+      }
+    }
+  ],
+  "resourceSelection": {
+    "recipes": [
+      {
+        "name": "my-recipe",
+        "semanticVersion": "x.x.x"
+      }
+    ]
+  }
+}

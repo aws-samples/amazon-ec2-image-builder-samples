@@ -1,0 +1,192 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder lifecycle management: a minimal pipeline whose output
+  images are cleaned up automatically by a lifecycle policy - keeping the
+  newest builds per recipe version and deleting the rest, AMIs and snapshots
+  included. The policies/ directory holds more policy shapes for the CLI.
+
+Resources:
+  # The role lifecycle actions run as. The managed policy scopes EC2 image
+  # and snapshot actions to resources tagged CreatedBy: EC2 Image Builder -
+  # the tag the service adds at distribution - so the role can't touch AMIs
+  # the service didn't build.
+  LifecycleExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/EC2ImageBuilderLifecycleExecutionPolicy'
+
+  # Keeps the 3 newest images per recipe version and deletes everything
+  # older - including the distributed AMIs and their snapshots.
+  KeepNewestThree:
+    Type: AWS::ImageBuilder::LifecyclePolicy
+    Properties:
+      Name: lifecycle-sample-keep-newest-three
+      Description: Keep the 3 newest images per recipe version, delete the rest
+      Status: ENABLED
+      ExecutionRole: !GetAtt LifecycleExecutionRole.Arn
+      ResourceType: AMI_IMAGE
+      PolicyDetails:
+        - Action:
+            Type: DELETE
+            # Without this, only the Image Builder image resource is deleted;
+            # the AMI and snapshots stay behind and keep billing.
+            IncludeResources:
+              Amis: true
+              Snapshots: true
+          Filter:
+            # For COUNT, Value is the number of resources to keep on hand.
+            Type: COUNT
+            Value: 3
+          ExclusionRules:
+            # Tag any image resource with this to pin it past the policy.
+            TagMap:
+              LifecyclePin: retain
+      ResourceSelection:
+        Recipes:
+          # x wildcards resolve at execution time, so recipe versions created
+          # after the policy are covered.
+          - Name: lifecycle-sample
+            SemanticVersion: x.x.x
+
+  # ---------------------------------------------------------------------
+  # A minimal pipeline that produces the images the policy manages. The
+  # build is intentionally trivial - the sample is about what happens to
+  # images after they're built.
+  # ---------------------------------------------------------------------
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  BuildMarkerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: lifecycle-sample-marker
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the same
+      # version when the document changes, and the recipe's LatestVersion
+      # reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Description: Stamps the build date into the image.
+      Data: |
+        name: lifecycle-sample-marker
+        description: Stamps the build date into the image.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: StampBuildDate
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - date -u '+%Y-%m-%dT%H:%M:%SZ' > /etc/lifecycle-sample-build
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      # The lifecycle policy above selects images by this recipe name.
+      Name: lifecycle-sample
+      Version: 1.0.x
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt BuildMarkerComponent.LatestVersion.Arn
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: lifecycle-sample
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here.
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/lifecycle-sample
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/lifecycle-sample
+      RetentionInDays: 7
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: lifecycle-sample
+      Description: >-
+        Produces the images that the lifecycle-sample policies manage.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Stamped onto the image resource on each scheduled run - the tags
+      # that policies/progressive-age.json's tagMap selection matches on.
+      # Manually started builds don't apply these; tag those images with
+      # 'aws imagebuilder tag-resource' (see the README's Testing steps).
+      ImageTags:
+        LifecycleGroup: lifecycle-sample
+      # Weekly, so retention has something to retire. EXPRESSION_MATCH_ONLY
+      # builds every cycle regardless of dependency updates.
+      Schedule:
+        ScheduleExpression: cron(0 9 ? * mon *)
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_ONLY
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  LifecyclePolicyArn:
+    Description: The count-based lifecycle policy managing this pipeline's images.
+    Value: !Ref KeepNewestThree
+  LifecycleExecutionRoleArn:
+    Description: >-
+      Execution role for lifecycle actions - also usable with 'aws
+      imagebuilder start-resource-state-update' for one-off cleanup.
+    Value: !GetAtt LifecycleExecutionRole.Arn

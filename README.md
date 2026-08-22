@@ -25,6 +25,7 @@ From there:
 | [distribution/cross-account-amis](distribution/cross-account-amis/) | Cross-account AMI distribution: a CMK with a least-privilege key policy, the target-account role, and per-account SSM parameters holding each account's AMI ID |
 | [golden-ami-pipeline](golden-ami-pipeline/) | The golden-AMI loop end to end: monthly patching from an SSM-parameter base, launch template promotion, an instance refresh that automatically moves the running Auto Scaling group onto each new AMI, and build events turned into readable pass/fail notifications |
 | [networking/private-vpc-builds](networking/private-vpc-builds/) | Builds in an isolated VPC with no internet - the endpoints a build needs, the S3 bucket allowlist, and a common-errors table mapping each failure to its missing endpoint (CloudFormation and CDK) |
+| [lifecycle](lifecycle/) | Automatic cleanup of old images, AMIs, and snapshots: the retention model explained, a working count-based policy, and ready-to-use policy documents for progressive age-based and guarded deletion |
 
 ### CloudFormation - Linux AMIs
 
