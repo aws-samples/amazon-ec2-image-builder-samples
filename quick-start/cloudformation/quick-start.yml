@@ -1,0 +1,276 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder quick start: a complete, minimal image pipeline for Amazon
+  Linux 2023. A custom component bakes build metadata into the image, the
+  recipe layers it with OS updates on the latest AL2023 base image, and the
+  distribution configuration publishes each build's AMI ID to an SSM parameter.
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+    Description: >-
+      Target architecture for the image. Switches the parent image and the
+      build instance type together (x86_64 builds on t3.medium, arm64 builds
+      on t4g.medium Graviton).
+
+Conditions:
+  IsArm64: !Equals [!Ref Architecture, arm64]
+
+Resources:
+  # S3 bucket for build logs. The bucket has versioning enabled - to delete the
+  # stack, remove all object versions and delete markers first.
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    # To keep the bucket when deleting the stack, set DeletionPolicy: Retain.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Build logs are only useful for recent troubleshooting - expire them
+          # so the bucket doesn't accumulate cost or block cleanup
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
+  # The build instance profile. The two managed policies are the supported
+  # baseline for Image Builder build instances; the inline statement adds
+  # write access to the logging bucket, which the managed policies don't know about.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - !Ref InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Without this, builds still succeed but no logs reach the bucket.
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  # The component's build phase runs on the build instance, validate runs
+  # right after it on the same instance, and test runs on a fresh instance
+  # launched from the output AMI - so the test step proves the file survived
+  # into the image.
+  BuildInfoComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: quick-start-cfn-build-info
+      # Components don't accept x wildcards. Keep the version fixed - when the
+      # document changes, the service increments the build number behind the
+      # same version (1.0.0/1, 1.0.0/2, ...), and the recipe's LatestVersion
+      # reference picks that up without editing this value.
+      Version: 1.0.0
+      Platform: Linux
+      Description: >-
+        Writes build metadata into the image, then verifies it in the validate
+        and test phases.
+      Data: |
+        name: quick-start-build-info
+        description: Writes build metadata into the image and verifies it made it into the AMI.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: WriteBuildInfo
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - mkdir -p /opt/quick-start
+                    - date -u '+Built by EC2 Image Builder on %Y-%m-%dT%H:%M:%SZ' > /opt/quick-start/build-info.txt
+                    - cat /etc/os-release >> /opt/quick-start/build-info.txt
+          - name: validate
+            steps:
+              - name: BuildInfoWritten
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - test -s /opt/quick-start/build-info.txt
+          - name: test
+            steps:
+              - name: BuildInfoInImage
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - test -s /opt/quick-start/build-info.txt
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: quick-start-cfn
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image at
+      # build time, so each build starts from the current AL2023 base.
+      ParentImage: !Sub
+        - 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${ImageName}/x.x.x'
+        - ImageName: !If [IsArm64, amazon-linux-2023-arm64, amazon-linux-2023-x86]
+      # Components run in list order: OS updates first, then the component
+      # created by this stack.
+      Components:
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: quick-start-cfn
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - !If [IsArm64, t4g.medium, t3.medium]
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+      # To keep the instance running after a failed build for debugging:
+      # TerminateInstanceOnFailure: false
+      # Build instances launch in the account's default VPC. Without a default
+      # VPC, or to use a different one, set a subnet and the security groups
+      # to use with it:
+      # SubnetId: subnet-...
+      # SecurityGroupIds: [sg-...]
+
+  # Pre-creating the log groups lets the stack own their retention and
+  # cleanup; the pipeline's logging configuration wires them up explicitly.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/quick-start-cfn
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/quick-start-cfn
+      RetentionInDays: 7
+
+  # Publishes each build's AMI ID to an SSM parameter - the handoff point for
+  # launch templates and other stacks. The /imagebuilder/ path is required:
+  # the service-linked role that writes the parameter only has
+  # ssm:PutParameter on that path. The parameter is service-managed rather
+  # than a stack resource, so deleting the stack doesn't delete it - the
+  # cleanup steps in the README do.
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: quick-start-cfn
+      Distributions:
+        - Region: !Ref AWS::Region
+          SsmParameterConfigurations:
+            - ParameterName: /imagebuilder/quick-start-cfn/latest-ami
+              DataType: aws:ec2:image
+
+  # Creating the pipeline doesn't start a build - see the README for how to
+  # run it. To build on a schedule instead, uncomment below; the start
+  # condition skips runs where nothing changed (no new base image release or
+  # component version), so the schedule doesn't rebuild identical images.
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: quick-start-cfn
+      Description: >-
+        Quick start pipeline building Amazon Linux 2023 with build metadata
+        baked in.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      # Pipeline-level logs (scheduling decisions, execution starts) and
+      # build logs each go to their own stack-owned group.
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Schedule:
+      #   ScheduleExpression: 'cron(0 9 ? * mon *)'
+      #   PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  AmiParameterName:
+    Description: SSM parameter that receives the AMI ID after each successful build.
+    Value: /imagebuilder/quick-start-cfn/latest-ami
+  LogBucketName:
+    Description: S3 bucket receiving detailed build logs.
+    Value: !Ref ImageBuilderLogBucket
