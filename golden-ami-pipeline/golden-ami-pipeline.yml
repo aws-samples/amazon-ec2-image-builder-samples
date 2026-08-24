@@ -1,0 +1,615 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  The golden-AMI loop, end to end: a scheduled EC2 Image Builder pipeline
+  patches a base image monthly, distribution publishes the new AMI to an SSM
+  parameter and promotes it to the default launch template version, and an
+  EventBridge-triggered Lambda rolls the Auto Scaling group onto it with an
+  instance refresh. A second Lambda turns image state-change events into
+  readable summaries.
+
+Parameters:
+  SeedAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: >-
+      Initial base AMI, resolved from a public SSM parameter; also the
+      launch template's first version. After deployment, the pipeline reads
+      the base from this stack's own
+      /golden-ami/base-ami parameter - update that parameter to change the
+      base without touching the stack.
+
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional email address for readable build notifications. Leave empty
+      to skip the subscription - the formatted summaries still land in the
+      formatter Lambda's log group.
+
+  FleetSize:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 4
+    Description: >-
+      Desired capacity of the demo Auto Scaling group that the instance
+      refresh rolls. Set 0 to skip running fleet instances (the refresh
+      then has nothing to do, but also no cost).
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+
+Resources:
+  # ---------------------------------------------------------------------
+  # The golden base parameter. The recipe reads it at build time through
+  # the ssm: parent-image reference - update the value and the next
+  # scheduled run builds from the new base.
+  # ---------------------------------------------------------------------
+  BaseAmiParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /golden-ami/base-ami
+      Type: String
+      DataType: aws:ec2:image
+      Value: !Ref SeedAmiId
+      Description: The base AMI the golden pipeline builds from.
+
+  # The pipeline's execution role. The managed policy covers the standard
+  # workflow actions; the inline statements cover exactly what this stack
+  # does outside the service defaults.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: GoldenAmiParameters
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The managed execution policy only reads parameters under
+              # /imagebuilder/ and the public /aws/service/ paths - the ssm:
+              # parent reference to /golden-ami/base-ami fails without this.
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/golden-ami/base-ami'
+              # Same story on the way out: distribution writes the output
+              # parameter outside /imagebuilder/.
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:AddTagsToResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/golden-ami/latest-ami'
+        - PolicyName: GoldenAmiLogGroups
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Log group names outside /aws/imagebuilder/ require the
+              # execution role to hold the CloudWatch Logs write permissions.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/golden-ami/*'
+
+  # ---------------------------------------------------------------------
+  # Build resources: instance profile, recipe, infrastructure.
+  # ---------------------------------------------------------------------
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    # Recipe creation validates that the ssm: parent parameter exists, so
+    # the parameter must be created first.
+    DependsOn: BaseAmiParameter
+    Properties:
+      Name: golden-ami-loop
+      Version: 1.0.x
+      # The ssm: prefix resolves the parameter at build time. Public
+      # parameters work here too with no extra IAM - for example the
+      # Canonical Ubuntu parameters (see the README).
+      ParentImage: ssm:/golden-ami/base-ami
+      # Monthly patching is the whole job: pull current updates on top of
+      # whatever the base parameter points at.
+      Components:
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: golden-ami-loop
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here.
+
+  # Custom log group paths - the stack owns naming and retention. Anything
+  # outside /aws/imagebuilder/ needs the execution role's logs permissions.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /golden-ami/image
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt NotificationKey.Arn
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /golden-ami/pipeline
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt NotificationKey.Arn
+
+  # ---------------------------------------------------------------------
+  # Distribution: publish the AMI ID and promote the launch template.
+  # ---------------------------------------------------------------------
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: golden-ami-loop
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'golden-ami-{{ imagebuilder:buildDate }}'
+          # The handoff for everything that isn't the fleet below: launch
+          # templates elsewhere can use resolve:ssm:/golden-ami/latest-ami.
+          SsmParameterConfigurations:
+            - ParameterName: /golden-ami/latest-ami
+              DataType: aws:ec2:image
+          # Image Builder adds a launch template version with the new AMI
+          # and makes it the default, so anything tracking $Default - the
+          # Auto Scaling group below - picks it up.
+          LaunchTemplateConfigurations:
+            - LaunchTemplateId: !Ref FleetLaunchTemplate
+              SetDefaultVersion: true
+
+  # ---------------------------------------------------------------------
+  # The scheduled pipeline. EXPRESSION_MATCH_ONLY builds every month
+  # unconditionally: OS packages update continuously without any recipe
+  # dependency changing, so a patch pipeline must not skip "no change"
+  # months. The auto-disable policy stops a pipeline whose scheduled runs
+  # keep failing instead of letting it fail forever unattended.
+  # ---------------------------------------------------------------------
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: golden-ami-loop
+      Description: Monthly-patched golden AMI feeding the fleet.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      Schedule:
+        # 06:00 UTC on the 1st of every month.
+        ScheduleExpression: 'cron(0 6 1 * ? *)'
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_ONLY
+        AutoDisablePolicy:
+          FailureCount: 3
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+
+  # ---------------------------------------------------------------------
+  # The fleet: a launch template tracking the golden AMI and a small Auto
+  # Scaling group. New instances always get the default template version;
+  # the instance refresh below replaces the running ones.
+  # ---------------------------------------------------------------------
+  FleetLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: golden-ami-fleet
+      LaunchTemplateData:
+        ImageId: !Ref SeedAmiId
+        InstanceType: t3.micro
+        MetadataOptions:
+          HttpTokens: required
+
+  FleetAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: golden-ami-fleet
+      LaunchTemplate:
+        LaunchTemplateId: !Ref FleetLaunchTemplate
+        # CloudFormation can't set $Default here (the API can). The refresh
+        # Lambda moves the group onto $Default with its first
+        # DesiredConfiguration, and it sticks from then on.
+        Version: !GetAtt FleetLaunchTemplate.DefaultVersionNumber
+      MinSize: '0'
+      MaxSize: '4'
+      DesiredCapacity: !Ref FleetSize
+      # Two AZs from the default VPC. Newer AZs sometimes lack default
+      # subnets in older accounts, so the sample sticks to the first two.
+      AvailabilityZones:
+        - !Select [0, !GetAZs '']
+        - !Select [1, !GetAZs '']
+      # Give replacement instances time to boot before the refresh counts
+      # them healthy.
+      DefaultInstanceWarmup: 60
+    # Deleting the ASG mid-refresh can hang stack deletion - let a running
+    # refresh finish before deleting the stack.
+
+  # ---------------------------------------------------------------------
+  # The loop closer: when this pipeline's image reaches AVAILABLE, roll
+  # the fleet. Keep the resources filter scoped to this pipeline's images -
+  # a pattern matching every AVAILABLE image in the account would also fire
+  # for other pipelines' images (and, for rules that start pipelines, can
+  # create endless build loops).
+  # ---------------------------------------------------------------------
+  RefreshFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: StartInstanceRefresh
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - autoscaling:StartInstanceRefresh
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${FleetAutoScalingGroup}'
+              # A DesiredConfiguration launch template makes Auto Scaling
+              # re-verify launch authorization across launch and network
+              # resources - Resource '*' plus the template condition is the
+              # narrowest grant that passes that check.
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    ec2:LaunchTemplate: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${FleetLaunchTemplate}'
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeLaunchTemplateVersions
+                Resource: '*'
+
+  # Stack-owned log group: encrypted, retention-capped, and deleted with
+  # the stack (Lambda would otherwise create an unmanaged one on first run).
+  RefreshFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /golden-ami/refresh-lambda
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt NotificationKey.Arn
+
+  RefreshFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Rolls the fleet onto the new default launch template version.
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt RefreshFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref RefreshFunctionLogGroup
+      Environment:
+        Variables:
+          ASG_NAME: !Ref FleetAutoScalingGroup
+          LAUNCH_TEMPLATE_ID: !Ref FleetLaunchTemplate
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          autoscaling = boto3.client("autoscaling")
+
+          def handler(event, context):
+              image_arn = event["resources"][0]
+              try:
+                  response = autoscaling.start_instance_refresh(
+                      AutoScalingGroupName=os.environ["ASG_NAME"],
+                      # Rolls the fleet onto the current default template
+                      # version - the one distribution just promoted - and
+                      # updates the group to track $Default from here on.
+                      DesiredConfiguration={
+                          "LaunchTemplate": {
+                              "LaunchTemplateId": os.environ["LAUNCH_TEMPLATE_ID"],
+                              "Version": "$Default",
+                          }
+                      },
+                      # Rolling defaults apply: MinHealthyPercentage 90,
+                      # warmup from the group's DefaultInstanceWarmup.
+                      # AutoRollback can't be used with $Default tracking.
+                      Preferences={"SkipMatching": True},
+                  )
+                  print(f"Started refresh {response['InstanceRefreshId']} for {image_arn}")
+              except autoscaling.exceptions.InstanceRefreshInProgressFault:
+                  # A previous build's refresh is still rolling; the fleet
+                  # converges on the newest default version when it finishes.
+                  print("Refresh already in progress - skipping")
+
+  RefreshFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RefreshFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ImageAvailableRule.Arn
+
+  ImageAvailableRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Fires when the golden pipeline publishes a new image.
+      EventPattern:
+        source:
+          - aws.imagebuilder
+        detail-type:
+          - EC2 Image Builder Image State Change
+        detail:
+          state:
+            status:
+              - AVAILABLE
+        # Only this pipeline's images - the recipe name is the first path
+        # segment of every image build version ARN it produces.
+        resources:
+          - prefix: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/golden-ami-loop/'
+      Targets:
+        - Id: refresh-fleet
+          Arn: !GetAtt RefreshFunction.Arn
+        - Id: format-notification
+          Arn: !GetAtt FormatterFunction.Arn
+
+  # ---------------------------------------------------------------------
+  # Notifications: the same state-change events that drive the refresh
+  # feed a formatter Lambda, which publishes a one-line pass/fail summary
+  # with the AMI IDs to a topic humans can subscribe to.
+  # ---------------------------------------------------------------------
+  NotificationKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the golden pipeline's notification topic and log groups
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Keeps the key manageable and lets same-account IAM policies -
+          # like the formatter Lambda role's grant - take effect.
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          # CloudWatch Logs uses the key on the log groups' behalf; the
+          # encryption context pins the grant to the /golden-ami/* groups.
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - kms:Encrypt*
+              - kms:Decrypt*
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:Describe*
+            Resource: '*'
+            Condition:
+              ArnLike:
+                kms:EncryptionContext:aws:logs:arn: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/golden-ami/*'
+
+  NotificationKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/golden-ami
+      TargetKeyId: !Ref NotificationKey
+
+  ReadableNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: golden-ami-build-summaries
+      KmsMasterKeyId: !GetAtt NotificationKey.Arn
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref ReadableNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  FormatterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: PublishSummaries
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The event only carries the image ARN and state - AMI IDs and
+              # failure reasons come from the image itself.
+              - Effect: Allow
+                Action:
+                  - imagebuilder:GetImage
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/golden-ami-loop/*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref ReadableNotificationTopic
+              # Publishing to the encrypted topic means using its key.
+              - Effect: Allow
+                Action:
+                  - kms:GenerateDataKey*
+                  - kms:Decrypt
+                Resource:
+                  - !GetAtt NotificationKey.Arn
+
+  FormatterFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /golden-ami/formatter-lambda
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt NotificationKey.Arn
+
+  FormatterFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Turns image state-change events into readable build summaries.
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt FormatterFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref FormatterFunctionLogGroup
+      Environment:
+        Variables:
+          SUMMARY_TOPIC_ARN: !Ref ReadableNotificationTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          imagebuilder = boto3.client("imagebuilder")
+          sns = boto3.client("sns")
+
+          def handler(event, context):
+              image_arn = event["resources"][0]
+              status = event["detail"]["state"]["status"]
+              image = imagebuilder.get_image(imageBuildVersionArn=image_arn)["image"]
+              amis = [
+                  f"{a.get('region')}: {a.get('image')}"
+                  for a in (image.get("outputResources") or {}).get("amis", [])
+              ]
+              lines = [f"Image build {image.get('name')} {image.get('version')}: {status}"]
+              if amis:
+                  lines.append("AMIs: " + ", ".join(amis))
+              if status == "FAILED":
+                  lines.append(f"Reason: {image.get('state', {}).get('reason', 'not provided')}")
+              summary = "\n".join(lines)
+              print(summary)
+              sns.publish(
+                  TopicArn=os.environ["SUMMARY_TOPIC_ARN"],
+                  Subject=f"Golden AMI build: {status}",
+                  Message=summary,
+              )
+
+  FormatterAvailablePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ImageAvailableRule.Arn
+
+  FormatterFailedPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FormatterFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ImageFailedRule.Arn
+
+  # Failed builds get a summary too - same formatter, separate rule so the
+  # fleet refresh only ever sees AVAILABLE images.
+  ImageFailedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Summarizes failed golden pipeline builds.
+      EventPattern:
+        source:
+          - aws.imagebuilder
+        detail-type:
+          - EC2 Image Builder Image State Change
+        detail:
+          state:
+            status:
+              - FAILED
+        resources:
+          - prefix: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:${AWS::AccountId}:image/golden-ami-loop/'
+      Targets:
+        - Id: format-notification
+          Arn: !GetAtt FormatterFunction.Arn
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start an out-of-cycle build with 'aws
+      imagebuilder start-image-pipeline-execution --image-pipeline-arn
+      <this value>'.
+    Value: !Ref ImagePipeline
+  BaseAmiParameterName:
+    Description: Update this parameter to change the base image for future builds.
+    Value: !Ref BaseAmiParameter
+  LatestAmiParameterName:
+    Description: Receives each build's AMI ID.
+    Value: /golden-ami/latest-ami
+  FleetAutoScalingGroupName:
+    Description: The demo fleet that instance refresh rolls onto new AMIs.
+    Value: !Ref FleetAutoScalingGroup
+  LaunchTemplateId:
+    Description: The launch template whose default version tracks the golden AMI.
+    Value: !Ref FleetLaunchTemplate
