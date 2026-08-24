@@ -1,0 +1,455 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder with Step Functions: a test workflow hands the output
+  AMI to a state machine that validates its registration properties from
+  outside the instance, and a failed check fails the image. A conventional
+  on-instance test workflow runs in the same parallel group.
+
+Parameters:
+  MaxRootVolumeGib:
+    Type: String
+    Default: '16'
+    AllowedPattern: ^\d+$
+    Description: >-
+      Largest root volume the AMI validation accepts, in GiB. Redeploy with
+      a value below the image's root volume size to watch the gate fail a
+      build.
+
+Resources:
+  # ---------------------------------------------------------------------
+  # The execution role. Required whenever custom workflows are attached.
+  # The managed policy covers the workflow actions; the inline statement
+  # covers starting and tracking this stack's state machine.
+  # ---------------------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: RunValidationStateMachine
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource:
+                  - !Ref ValidationStateMachine
+              # ExecuteStateMachine waits for the result, which takes
+              # DescribeExecution on the executions the step starts.
+              - Effect: Allow
+                Action:
+                  - states:DescribeExecution
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${ValidationStateMachine.Name}:*'
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # ---------------------------------------------------------------------
+  # The AMI validation: a Lambda that checks the output AMI's registration
+  # properties - things no on-instance test can see - wrapped in a state
+  # machine that passes or fails on the result. Swap the Lambda's checks
+  # for your own release criteria; this is also where a heavier gate would
+  # launch a scan and wait on its findings.
+  # ---------------------------------------------------------------------
+  ValidationFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: DescribeOutputAmi
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Describe calls can't be resource-scoped.
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeImages
+                Resource: '*'
+
+  ValidationFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /sfn-integration/validation-lambda
+      RetentionInDays: 30
+
+  ValidationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Validates the output AMI's registration properties.
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt ValidationFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ValidationFunctionLogGroup
+      Code:
+        ZipFile: |
+          import boto3
+
+          ec2 = boto3.client("ec2")
+
+          def handler(event, context):
+              image = ec2.describe_images(ImageIds=[event["imageId"]])["Images"][0]
+              max_root_gib = int(event["maxRootVolumeGib"])
+              findings = []
+              if not image.get("EnaSupport"):
+                  findings.append("ENA support is not enabled")
+              if image.get("Public"):
+                  findings.append("AMI is publicly launchable")
+              root = next((m["Ebs"] for m in image["BlockDeviceMappings"]
+                           if m.get("DeviceName") == image.get("RootDeviceName")
+                           and "Ebs" in m), {})
+              if root.get("VolumeSize", 0) > max_root_gib:
+                  findings.append(
+                      f"root volume {root['VolumeSize']} GiB exceeds {max_root_gib} GiB")
+              summary = "; ".join(findings) or "all checks passed"
+              print(f"{event['imageId']}: {summary}")
+              return {
+                  "compliant": not findings,
+                  "imageId": event["imageId"],
+                  "findingsSummary": summary,
+              }
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeValidationFunction
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ValidationFunction.Arn
+
+  ValidationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: sfn-integration-release-checks
+      RoleArn: !GetAtt StateMachineRole.Arn
+      Definition:
+        StartAt: CheckImage
+        States:
+          CheckImage:
+            Type: Task
+            Resource: !GetAtt ValidationFunction.Arn
+            Next: IsCompliant
+          IsCompliant:
+            Type: Choice
+            Choices:
+              - Variable: $.compliant
+                BooleanEquals: true
+                Next: Compliant
+            Default: NotCompliant
+          Compliant:
+            Type: Succeed
+          NotCompliant:
+            Type: Fail
+            Error: AmiValidationFailed
+            # CausePath surfaces the concrete findings on the failed
+            # execution, where the failed workflow step points.
+            CausePath: $.findingsSummary
+
+  # ---------------------------------------------------------------------
+  # A minimal component so the recipe has something to build.
+  # ---------------------------------------------------------------------
+  BuildInfoComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: sfn-integration-build-info
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the same
+      # version when the document changes, and the recipe's LatestVersion
+      # reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: sfn-integration-build-info
+        description: Writes build metadata into the image.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: WriteBuildInfo
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - mkdir -p /opt/sfn-integration
+                    - date -u '+Built on %Y-%m-%dT%H:%M:%SZ' > /opt/sfn-integration/build-info.txt
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: sfn-integration
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair.
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image at
+      # build time.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/sfn-integration
+      RetentionInDays: 30
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/sfn-integration
+      RetentionInDays: 30
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: sfn-integration
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here.
+
+  # ---------------------------------------------------------------------
+  # The build workflow: a standard build that exports the output image ID.
+  # Workflows pass data across stages through outputs - the test workflow
+  # reads this one as $.workflowOutputs.ImageId.
+  # ---------------------------------------------------------------------
+  BuildWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: sfn-integration-build
+      # Workflows version like components: concrete at creation, x wildcards
+      # when referencing.
+      Version: 1.0.0
+      Type: BUILD
+      Data: |
+        name: sfn-integration-build
+        description: Standard build that exports the output image ID for the test stage.
+        schemaVersion: 1.0
+
+        steps:
+          - name: LaunchBuildInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: ssmAgent
+
+          - name: ApplyBuildComponents
+            action: ExecuteComponents
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: SanitizeBuildInstance
+            action: SanitizeInstance
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: CreateOutputImage
+            action: CreateImage
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: TerminateBuildInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+        outputs:
+          - name: ImageId
+            value: "$.stepOutputs.CreateOutputImage.imageId"
+
+  # ---------------------------------------------------------------------
+  # Two test workflows that run in the same parallel group. The OS check
+  # launches an instance from the output AMI and tests the image from the
+  # inside; the AMI validation runs no instance at all - its single step
+  # hands the AMI to the state machine, which checks it from the outside.
+  # ---------------------------------------------------------------------
+  OsCheckWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: sfn-integration-os-check
+      Version: 1.0.0
+      Type: TEST
+      Data: |
+        name: sfn-integration-os-check
+        description: Verifies the built image boots and reports the expected OS.
+        schemaVersion: 1.0
+
+        steps:
+          # In the test stage, LaunchInstance defaults to the image the
+          # build produced.
+          - name: LaunchTestInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: ssmAgent
+
+          - name: CheckOsRelease
+            action: RunCommand
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchTestInstance.instanceId"
+              documentName: AWS-RunShellScript
+              parameters:
+                # A single chained command: the document's exit status is the
+                # last command's, so separate list entries wouldn't each gate.
+                commands:
+                  - grep -q 'Amazon Linux' /etc/os-release && test -s /opt/sfn-integration/build-info.txt
+
+          - name: TerminateTestInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchTestInstance.instanceId"
+
+  ValidateAmiWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: sfn-integration-validate-ami
+      Version: 1.0.0
+      Type: TEST
+      Data: |
+        name: sfn-integration-validate-ami
+        description: Hands the output AMI to a Step Functions state machine for validation.
+        schemaVersion: 1.0
+
+        parameters:
+          - name: stateMachineArn
+            type: string
+            description: The validation state machine to run against the output AMI.
+          - name: maxRootVolumeGib
+            type: string
+            description: Largest root volume the validation accepts, in GiB.
+
+        steps:
+          # The execution input is a JSON string; values wrapped in double
+          # curly braces resolve at runtime, and the .$ suffix marks an input
+          # that carries dynamic variables (the documented chaining rule).
+          - name: ValidateOutputAmi
+            action: ExecuteStateMachine
+            onFailure: Abort
+            inputs:
+              stateMachineArn.$: "$.parameters.stateMachineArn"
+              input.$: |
+                {
+                  "imageId": "{{ $.workflowOutputs.ImageId }}",
+                  "maxRootVolumeGib": "{{ $.parameters.maxRootVolumeGib }}"
+                }
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: sfn-integration
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'sfn-integration-{{ imagebuilder:buildDate }}'
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: sfn-integration
+      Description: Builds, then validates the output AMI in parallel - on the instance and through Step Functions.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Setting Workflows replaces the defaults: exactly these three run.
+      # The two test workflows share a parallel group, so they run at the
+      # same time.
+      Workflows:
+        - WorkflowArn: !GetAtt BuildWorkflow.Arn
+        - WorkflowArn: !GetAtt OsCheckWorkflow.Arn
+          ParallelGroup: post-build
+        - WorkflowArn: !GetAtt ValidateAmiWorkflow.Arn
+          ParallelGroup: post-build
+          Parameters:
+            - Name: stateMachineArn
+              Value:
+                - !Ref ValidationStateMachine
+            - Name: maxRootVolumeGib
+              Value:
+                - !Ref MaxRootVolumeGib
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  ValidationStateMachineArn:
+    Description: The state machine the test stage runs against the output AMI.
+    Value: !Ref ValidationStateMachine
