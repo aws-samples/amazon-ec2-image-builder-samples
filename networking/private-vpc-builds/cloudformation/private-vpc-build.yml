@@ -1,0 +1,407 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder in a private VPC with no internet access: an isolated VPC
+  whose only exits are VPC endpoints, and a complete Amazon Linux 2023 image
+  pipeline that builds inside it. The S3 endpoint policy allowlists exactly
+  the buckets a build needs.
+
+Resources:
+  # ---------------------------------------------------------------------
+  # Network: one VPC, one subnet, no internet gateway, no NAT. Everything
+  # the build instance talks to goes through the endpoints below.
+  # ---------------------------------------------------------------------
+  BuildVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      # Interface endpoints with private DNS need both of these enabled.
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  BuildSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref BuildVpc
+      CidrBlock: 10.0.0.0/25
+      MapPublicIpOnLaunch: false
+
+  BuildRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref BuildVpc
+
+  BuildSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref BuildSubnet
+      RouteTableId: !Ref BuildRouteTable
+
+  # The build instance's security group. No ingress at all - the SSM Agent
+  # initiates every connection outbound. The VPC has no internet route, so
+  # this egress can only ever reach the VPC endpoints and the S3 gateway
+  # endpoint.
+  BuildInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Image Builder build instances (no ingress)
+      VpcId: !Ref BuildVpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS to VPC endpoints and the S3 gateway endpoint
+
+  # Interface endpoints only accept connections this group allows in.
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPC interface endpoints for Image Builder builds
+      VpcId: !Ref BuildVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !GetAtt BuildInstanceSecurityGroup.GroupId
+          Description: HTTPS from build instances
+      # Endpoint ENIs only answer inbound requests. A loopback-only rule
+      # replaces the implicit allow-all egress.
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+          Description: Disallow all traffic
+
+  # ---------------------------------------------------------------------
+  # The endpoints. Each one carries a specific part of a build - the
+  # README's common-errors table maps the failure you see to the endpoint
+  # that's missing.
+  # ---------------------------------------------------------------------
+
+  # SSM registration and Run Command - how Image Builder reaches the
+  # instance at all.
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcId: !Ref BuildVpc
+      SubnetIds: [!Ref BuildSubnet]
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PrivateDnsEnabled: true
+
+  # The SSM Agent's control channel.
+  SsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcId: !Ref BuildVpc
+      SubnetIds: [!Ref BuildSubnet]
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PrivateDnsEnabled: true
+
+  # AWSTOE on the build instance calls Image Builder APIs (GetComponent)
+  # to fetch the component documents it executes.
+  ImageBuilderEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.imagebuilder'
+      VpcId: !Ref BuildVpc
+      SubnetIds: [!Ref BuildSubnet]
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PrivateDnsEnabled: true
+
+  # Build logs streamed to the CloudWatch log groups below.
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcId: !Ref BuildVpc
+      SubnetIds: [!Ref BuildSubnet]
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PrivateDnsEnabled: true
+
+  # Only needed when components decrypt KMS-encrypted values (SecureString
+  # parameters, Secrets Manager secrets). This sample's build doesn't, but
+  # most real components do - keeping it saves the next debugging session.
+  KmsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.kms'
+      VpcId: !Ref BuildVpc
+      SubnetIds: [!Ref BuildSubnet]
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PrivateDnsEnabled: true
+
+  # The S3 gateway endpoint, with a policy allowlisting exactly the buckets
+  # a build touches. Every entry below maps to a concrete failure when it's
+  # missing - see the README's common-errors table.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcId: !Ref BuildVpc
+      RouteTableIds: [!Ref BuildRouteTable]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ImageBuilderBuildReads
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+            Resource:
+              # AWSTOE bootstrap - the component manager binary itself.
+              - !Sub 'arn:${AWS::Partition}:s3:::ec2imagebuilder-toe-${AWS::Region}-prod/*'
+              # Amazon-managed component content (simple-boot-test-linux below).
+              - !Sub 'arn:${AWS::Partition}:s3:::ec2imagebuilder-managed-resources-${AWS::Region}-prod/components/*'
+              # SSM Agent install/update packages - Image Builder's default
+              # user data bootstraps the agent from here on Linux bases that
+              # don't ship it.
+              - !Sub 'arn:${AWS::Partition}:s3:::amazon-ssm-${AWS::Region}/*'
+              # Amazon Linux 2023 package repositories - OS updates resolve
+              # to regional S3 buckets, so patching works with no internet.
+              - !Sub 'arn:${AWS::Partition}:s3:::al2023-repos-${AWS::Region}-de612dc2/*'
+          - Sid: BuildLogWrites
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:PutObject
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  # ---------------------------------------------------------------------
+  # From here down: the same complete, minimal AL2023 pipeline as the
+  # quick-start sample, wired into the isolated subnet.
+  # ---------------------------------------------------------------------
+
+  # S3 bucket for build logs. The bucket has versioning enabled - to delete
+  # the stack, remove all object versions and delete markers first.
+  ImageBuilderLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+
+  # Rejects plaintext and legacy-TLS connections to the build logs.
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ImageBuilderLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
+  # The build instance profile. The two managed policies are the supported
+  # baseline for Image Builder build instances; the inline statement adds
+  # write access to the logging bucket.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceRoleLoggingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ImageBuilderLogBucketPolicy
+      Roles:
+        - !Ref InstanceRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Without this, builds still succeed but no logs reach the bucket.
+          - Action:
+              - s3:PutObject
+            Effect: Allow
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ImageBuilderLogBucket}/*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  # Installs a package from the AL2023 repositories - the dnf traffic this
+  # generates is what the S3 endpoint policy's repository entry carries.
+  RepoInstallComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: private-vpc-repo-install-cfn
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the same
+      # version when the document changes, and the recipe's LatestVersion
+      # reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: private-vpc-repo-install
+        description: Installs httpd from the AL2023 package repositories.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallFromRepos
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - dnf -y install httpd
+                    - httpd -v
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: private-vpc-build-cfn
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair.
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image at
+      # build time.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        # dnf resolves the AL2023 regional S3 repositories - allowed through
+        # the S3 endpoint policy above, so package installs work offline.
+        - ComponentArn: !GetAtt RepoInstallComponent.LatestVersion.Arn
+        # An Amazon-managed test component - its content downloads from the
+        # managed-resources bucket in the S3 endpoint policy.
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/simple-boot-test-linux/x.x.x'
+
+  # The wiring that makes the whole sample: build instances launch in the
+  # isolated subnet with the endpoint-only security group.
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: private-vpc-build-cfn
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      SubnetId: !Ref BuildSubnet
+      SecurityGroupIds:
+        - !GetAtt BuildInstanceSecurityGroup.GroupId
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref ImageBuilderLogBucket
+      # To keep the instance running after a failed build for debugging:
+      # TerminateInstanceOnFailure: false
+
+  # Pre-creating the log groups lets the stack own their retention and
+  # cleanup; the pipeline's logging configuration wires them up explicitly.
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/private-vpc-build-cfn
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/private-vpc-build-cfn
+      RetentionInDays: 7
+
+  # Publishes each build's AMI ID to an SSM parameter. The /imagebuilder/
+  # path is required: the service-linked role that writes the parameter only
+  # has ssm:PutParameter on that path. The parameter is service-managed, so
+  # deleting the stack doesn't delete it - the README's cleanup steps do.
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: private-vpc-build-cfn
+      Distributions:
+        - Region: !Ref AWS::Region
+          SsmParameterConfigurations:
+            - ParameterName: /imagebuilder/private-vpc-build-cfn/latest-ami
+              DataType: aws:ec2:image
+
+  # Creating the pipeline doesn't start a build - see the README for how to
+  # run it.
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: private-vpc-build-cfn
+      Description: >-
+        Builds Amazon Linux 2023 inside an isolated VPC where the only
+        network paths are VPC endpoints.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  AmiParameterName:
+    Description: SSM parameter that receives the AMI ID after each successful build.
+    Value: /imagebuilder/private-vpc-build-cfn/latest-ami
+  VpcId:
+    Description: The isolated VPC the build runs in.
+    Value: !Ref BuildVpc
+  LogBucketName:
+    Description: S3 bucket receiving detailed build logs.
+    Value: !Ref ImageBuilderLogBucket
