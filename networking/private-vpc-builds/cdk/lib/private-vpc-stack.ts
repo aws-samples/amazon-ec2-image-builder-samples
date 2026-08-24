@@ -68,7 +68,6 @@ export class PrivateVpcBuildStack extends cdk.Stack {
     const interfaceEndpoints: [string, ec2.InterfaceVpcEndpointAwsService][] = [
       ['Ssm', ec2.InterfaceVpcEndpointAwsService.SSM],
       ['SsmMessages', ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES],
-      ['Ec2Messages', ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES],
       ['ImageBuilder', ec2.InterfaceVpcEndpointAwsService.IMAGE_BUILDER],
       ['Logs', ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS],
       ['Kms', ec2.InterfaceVpcEndpointAwsService.KMS],

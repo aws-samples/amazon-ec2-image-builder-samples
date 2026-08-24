@@ -10,7 +10,6 @@ Two equivalent variants: a single CloudFormation template ([cloudformation/priva
 |---|---|---|
 | `ssm` (interface) | Instance registration, Run Command | The build never starts executing - it times out "verifying the Systems Manager Agent availability on the target instance(s)" |
 | `ssmmessages` (interface) | The SSM Agent's control channel | Same timeout as above - the agent can't open its channel |
-| `ec2messages` (interface) | The agent's older command channel - the SSM docs call for both | Agent communication failures on older agent versions |
 | `imagebuilder` (interface) | AWSTOE on the build instance fetches component documents (`GetComponent`) | The build fails after SSM connects, when the orchestrator can't download components |
 | `logs` (interface) | Build logs to the CloudWatch log groups | Builds succeed but the log groups stay empty |
 | `kms` (interface) | Components decrypting KMS-encrypted values (SecureString parameters, Secrets Manager secrets) | Decryption steps fail; harmless until a component needs it |
@@ -30,7 +29,7 @@ Windows note: Image Builder does not install the SSM Agent on Windows build inst
 
 ## Cost
 
-The six interface endpoints bill at standard AWS PrivateLink rates per AZ-hour plus data, whether or not a build is running. Builds add the usual t3.medium instance time. Delete the stack when you're done experimenting.
+The five interface endpoints bill at standard AWS PrivateLink rates per AZ-hour plus data, whether or not a build is running. Builds add the usual t3.medium instance time. Delete the stack when you're done experimenting.
 
 ## Prerequisites
 
@@ -79,7 +78,7 @@ After the build completes:
 
 | What you see | Likely cause | Fix |
 |---|---|---|
-| Build times out with `Step timed out while step is verifying the Systems Manager Agent availability on the target instance(s)` | The instance can't reach Systems Manager - missing `ssm`/`ssmmessages` endpoint, endpoint security group not admitting the instance, or private DNS disabled | Verify all three SSM-family endpoints exist with private DNS enabled, and the endpoint security group allows 443 from the build instance's security group |
+| Build times out with `Step timed out while step is verifying the Systems Manager Agent availability on the target instance(s)` | The instance can't reach Systems Manager - missing `ssm`/`ssmmessages` endpoint, endpoint security group not admitting the instance, or private DNS disabled | Verify both SSM endpoints exist with private DNS enabled, and the endpoint security group allows 443 from the build instance's security group |
 | Build fails after SSM connects, while downloading or running components | Missing `imagebuilder` endpoint, or the S3 endpoint policy doesn't include the TOE / managed-resources buckets | Check the `imagebuilder` endpoint and the first two bucket entries in the S3 endpoint policy |
 | `dnf` steps fail with repository errors | The S3 endpoint policy doesn't include the AL2023 repository bucket | Keep the `al2023-repos-<region>-de612dc2` entry in the S3 endpoint policy |
 | Build succeeds but the S3 log bucket is empty, or logs show `AccessDenied: Access Denied status code: 403` | The S3 endpoint policy is missing the log bucket `PutObject` entry, or the instance profile lost its logging statement | Both grants matter: the endpoint policy AND the instance role need the log bucket write |

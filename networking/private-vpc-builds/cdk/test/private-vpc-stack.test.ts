@@ -15,12 +15,12 @@ test('the VPC is isolated: no internet gateway, no NAT gateway', () => {
   template.resourceCountIs('AWS::EC2::NatGateway', 0);
 });
 
-test('creates the six interface endpoints and the S3 gateway endpoint', () => {
+test('creates the five interface endpoints and the S3 gateway endpoint', () => {
   const template = synth();
-  template.resourceCountIs('AWS::EC2::VPCEndpoint', 7);
+  template.resourceCountIs('AWS::EC2::VPCEndpoint', 6);
   const endpoints = template.findResources('AWS::EC2::VPCEndpoint');
   const services = JSON.stringify(endpoints);
-  for (const svc of ['.ssm', '.ssmmessages', '.ec2messages', '.imagebuilder', '.logs', '.kms', '.s3']) {
+  for (const svc of ['.ssm', '.ssmmessages', '.imagebuilder', '.logs', '.kms', '.s3']) {
     expect(services).toContain(svc);
   }
 });

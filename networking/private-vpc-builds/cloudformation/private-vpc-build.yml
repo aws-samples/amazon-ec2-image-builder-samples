@@ -103,18 +103,6 @@ Resources:
       SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
       PrivateDnsEnabled: true
 
-  # Older agent command channel - the SSM docs still call for both message
-  # endpoints.
-  Ec2MessagesEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Properties:
-      VpcEndpointType: Interface
-      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
-      VpcId: !Ref BuildVpc
-      SubnetIds: [!Ref BuildSubnet]
-      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
-      PrivateDnsEnabled: true
-
   # AWSTOE on the build instance calls Image Builder APIs (GetComponent)
   # to fetch the component documents it executes.
   ImageBuilderEndpoint:
