@@ -1,0 +1,50 @@
+{
+  "name": "guarded-delete",
+  "description": "Delete year-old images unless they are still in use or pinned",
+  "status": "ENABLED",
+  "executionRole": "arn:aws:iam::111122223333:role/LifecycleExecutionRole",
+  "resourceType": "AMI_IMAGE",
+  "policyDetails": [
+    {
+      "action": {
+        "type": "DELETE",
+        "includeResources": {
+          "amis": true,
+          "snapshots": true
+        }
+      },
+      "filter": {
+        "type": "AGE",
+        "value": 1,
+        "unit": "YEARS",
+        "retainAtLeast": 3
+      },
+      "exclusionRules": {
+        "tagMap": {
+          "LifecyclePin": "retain"
+        },
+        "amis": {
+          "isPublic": true,
+          "sharedAccounts": [
+            "444455556666"
+          ],
+          "lastLaunched": {
+            "value": 30,
+            "unit": "DAYS"
+          },
+          "regions": [
+            "us-east-1"
+          ],
+          "tagMap": {
+            "Environment": "production"
+          }
+        }
+      }
+    }
+  ],
+  "resourceSelection": {
+    "tagMap": {
+      "LifecycleGroup": "lifecycle-sample"
+    }
+  }
+}

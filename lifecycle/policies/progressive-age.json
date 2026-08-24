@@ -1,0 +1,55 @@
+{
+  "name": "progressive-age",
+  "description": "Deprecate at 90 days, disable at 120, delete at 180 - keeping at least 2",
+  "status": "ENABLED",
+  "executionRole": "arn:aws:iam::111122223333:role/LifecycleExecutionRole",
+  "resourceType": "AMI_IMAGE",
+  "policyDetails": [
+    {
+      "action": {
+        "type": "DEPRECATE",
+        "includeResources": {
+          "amis": true
+        }
+      },
+      "filter": {
+        "type": "AGE",
+        "value": 90,
+        "unit": "DAYS"
+      }
+    },
+    {
+      "action": {
+        "type": "DISABLE",
+        "includeResources": {
+          "amis": true
+        }
+      },
+      "filter": {
+        "type": "AGE",
+        "value": 120,
+        "unit": "DAYS"
+      }
+    },
+    {
+      "action": {
+        "type": "DELETE",
+        "includeResources": {
+          "amis": true,
+          "snapshots": true
+        }
+      },
+      "filter": {
+        "type": "AGE",
+        "value": 180,
+        "unit": "DAYS",
+        "retainAtLeast": 2
+      }
+    }
+  ],
+  "resourceSelection": {
+    "tagMap": {
+      "LifecycleGroup": "lifecycle-sample"
+    }
+  }
+}
