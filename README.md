@@ -27,6 +27,7 @@ From there:
 | [networking/private-vpc-builds](networking/private-vpc-builds/) | Builds in an isolated VPC with no internet - the endpoints a build needs, the S3 bucket allowlist, and a common-errors table mapping each failure to its missing endpoint (CloudFormation and CDK) |
 | [lifecycle](lifecycle/) | Automatic cleanup of old images, AMIs, and snapshots: the retention model explained, a working count-based policy, and ready-to-use policy documents for progressive age-based and guarded deletion |
 | [Terraform/cross-account-amis](Terraform/cross-account-amis/) | The cross-account distribution sample in Terraform - component documents via file(), content-hash versioning, and the two-account apply flow |
+| [workflows/approval-gate](workflows/approval-gate/) | A build workflow that pauses for human approval before the image is created - WaitForAction, an SNS approval request, and the RESUME/STOP response flow |
 
 ### CloudFormation - Linux AMIs
 
