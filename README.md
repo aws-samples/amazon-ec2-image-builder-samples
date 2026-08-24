@@ -1,6 +1,6 @@
 # Amazon EC2 Image Builder Samples
 
-Working samples for [Amazon EC2 Image Builder](https://aws.amazon.com/image-builder/): CloudFormation templates, CDK applications, and AWSTOE components. Each sample is self-contained with its own README.
+Working samples for [Amazon EC2 Image Builder](https://aws.amazon.com/image-builder/): CloudFormation templates, CDK applications, Terraform modules, and AWSTOE components. Each sample is self-contained with its own README.
 
 This repository is maintained by the EC2 Image Builder service team. Samples are provided as-is - we review issues and pull requests on a best-effort basis.
 
@@ -26,6 +26,7 @@ From there:
 | [golden-ami-pipeline](golden-ami-pipeline/) | The golden-AMI loop end to end: monthly patching from an SSM-parameter base, launch template promotion, an instance refresh that automatically moves the running Auto Scaling group onto each new AMI, and build events turned into readable pass/fail notifications |
 | [networking/private-vpc-builds](networking/private-vpc-builds/) | Builds in an isolated VPC with no internet - the endpoints a build needs, the S3 bucket allowlist, and a common-errors table mapping each failure to its missing endpoint (CloudFormation and CDK) |
 | [lifecycle](lifecycle/) | Automatic cleanup of old images, AMIs, and snapshots: the retention model explained, a working count-based policy, and ready-to-use policy documents for progressive age-based and guarded deletion |
+| [Terraform/cross-account-amis](Terraform/cross-account-amis/) | The cross-account distribution sample in Terraform - component documents via file(), content-hash versioning, and the two-account apply flow |
 
 ### CloudFormation - Linux AMIs
 

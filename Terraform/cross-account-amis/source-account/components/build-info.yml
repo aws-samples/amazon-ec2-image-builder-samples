@@ -1,0 +1,13 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: cross-account-sample-tf-build-info
+description: Writes a marker file used to verify the AMI in target accounts.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: WriteBuildInfo
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "Built by the EC2 Image Builder cross-account distribution sample (Terraform)" > /etc/cross-account-sample-release
