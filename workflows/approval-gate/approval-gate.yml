@@ -1,0 +1,289 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder approval gate: a custom build workflow that pauses before
+  creating the image. A WaitForAction step notifies an SNS topic and waits for
+  send-workflow-step-action RESUME or STOP, so a human (or an automated check)
+  approves every image while the build instance is still alive to inspect.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional email address to subscribe to the approval topic. Leave empty
+      to skip the subscription and read notifications from the topic through
+      other means.
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+
+Resources:
+  # ---------------------------------------------------------------------
+  # The execution role. Required whenever custom workflows are attached.
+  # The managed policy covers the workflow actions, including SNS writes;
+  # the encrypted topic additionally needs the key grant, and the scoped
+  # sns:Publish keeps the delta explicit.
+  # ---------------------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: ApprovalNotifications
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The service publishes the WaitForAction notification as this
+              # role, so it needs the topic and its encryption key.
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref ApprovalTopic
+              - Effect: Allow
+                Action:
+                  - kms:GenerateDataKey*
+                  - kms:Decrypt
+                Resource:
+                  - !GetAtt NotificationKey.Arn
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # ---------------------------------------------------------------------
+  # The approval topic. The WaitForAction step publishes here through the
+  # execution role; approvers reply with send-workflow-step-action.
+  # ---------------------------------------------------------------------
+  NotificationKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the approval-gate notification topic
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Keeps the key manageable and lets same-account IAM policies -
+          # like the execution role's grant - take effect.
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: approval-gate-notifications
+      KmsMasterKeyId: !GetAtt NotificationKey.Arn
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # ---------------------------------------------------------------------
+  # A minimal component so the recipe has something to build.
+  # ---------------------------------------------------------------------
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/approval-gate
+      RetentionInDays: 30
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/approval-gate
+      RetentionInDays: 30
+
+  BuildInfoComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: approval-gate-build-info
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the same
+      # version when the document changes, and the recipe's LatestVersion
+      # reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: approval-gate-build-info
+        description: Writes build metadata into the image.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: WriteBuildInfo
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - mkdir -p /opt/approval-gate
+                    - date -u '+Built on %Y-%m-%dT%H:%M:%SZ' > /opt/approval-gate/build-info.txt
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: approval-gate
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair.
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image at
+      # build time.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: approval-gate
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here.
+
+  # ---------------------------------------------------------------------
+  # The build workflow. The same shape as a standard build until the
+  # approval step: the workflow pauses with the build instance still
+  # running, so the approver can inspect it before the image is created.
+  # ---------------------------------------------------------------------
+  ApprovalWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: approval-gate-build
+      # Workflows version like components: concrete at creation, x wildcards
+      # when referencing.
+      Version: 1.0.0
+      Type: BUILD
+      Data: |
+        name: approval-gate-build
+        description: Build workflow that waits for approval before creating the image.
+        schemaVersion: 1.0
+
+        parameters:
+          - name: approvalTopicArn
+            type: string
+            description: SNS topic the approval request is published to.
+
+        steps:
+          - name: LaunchBuildInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: ssmAgent
+
+          - name: ApplyBuildComponents
+            action: ExecuteComponents
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          # Publishes to the topic and pauses (default 3 days, 7-day max via
+          # timeoutSeconds). The message carries the image ARN, the step
+          # execution ID, and this payload - see the README for the flow.
+          - name: ApproveImage
+            action: WaitForAction
+            onFailure: Abort
+            inputs:
+              snsTopicArn.$: "$.parameters.approvalTopicArn"
+              payload: 'Inspect the build instance for this step execution, then approve (RESUME) or reject (STOP) the image.'
+
+          - name: CreateOutputImage
+            action: CreateImage
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: TerminateBuildInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+        outputs:
+          - name: ImageId
+            value: "$.stepOutputs.CreateOutputImage.imageId"
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: approval-gate
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'approval-gate-{{ imagebuilder:buildDate }}'
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: approval-gate
+      Description: Builds pause for approval before the image is created.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Setting Workflows replaces the defaults: only what's named here runs,
+      # so this pipeline runs the custom build workflow and skips the test stage.
+      Workflows:
+        - WorkflowArn: !GetAtt ApprovalWorkflow.Arn
+          Parameters:
+            - Name: approvalTopicArn
+              Value:
+                - !Ref ApprovalTopic
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  ApprovalTopicArn:
+    Description: The topic that receives approval requests.
+    Value: !Ref ApprovalTopic
