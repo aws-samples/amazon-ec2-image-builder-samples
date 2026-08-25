@@ -1,0 +1,41 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: conditional-install
+description: >-
+  Installs a package with whichever package manager the distribution has -
+  one component that works across distributions. Skipped steps count as
+  successful. The validate phase asserts the install on the build instance.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallWithDnf
+        action: ExecuteBash
+        if:
+          and:
+            - binaryExists: 'dnf'
+            - not:
+                binaryExists: 'unzip'
+        inputs:
+          commands:
+            - dnf -y install unzip
+
+      - name: InstallWithAptGet
+        action: ExecuteBash
+        if:
+          and:
+            - binaryExists: 'apt-get'
+            - not:
+                binaryExists: 'unzip'
+        inputs:
+          commands:
+            - apt-get update
+            - apt-get -y install unzip
+
+  - name: validate
+    steps:
+      - name: UnzipInstalled
+        action: ExecuteBash
+        inputs:
+          commands:
+            - unzip -v > /dev/null

@@ -1,0 +1,34 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: web-download-verified
+description: >-
+  Downloads a file over HTTPS and fails the build unless it matches the
+  expected checksum - point source and checksum at your own artifact.
+schemaVersion: 1.0
+parameters:
+  - source:
+      type: string
+      description: URL of the file to download.
+  - sha256:
+      type: string
+      description: Expected SHA-256 checksum of the file.
+phases:
+  - name: build
+    steps:
+      - name: FetchVerified
+        action: WebDownload
+        inputs:
+          - source: '{{ source }}'
+            destination: /tmp/downloaded-artifact
+            checksum: '{{ sha256 }}'
+            algorithm: SHA256
+
+  # The artifact is used during the build; /tmp doesn't persist into the
+  # image, so there's nothing left for a test phase to assert.
+  - name: validate
+    steps:
+      - name: ArtifactPresent
+        action: ExecuteBash
+        inputs:
+          commands:
+            - test -s /tmp/downloaded-artifact

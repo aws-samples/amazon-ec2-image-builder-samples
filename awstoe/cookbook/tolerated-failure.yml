@@ -1,0 +1,26 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: tolerated-failure
+description: >-
+  A step that is allowed to fail. Ignore is the only tolerated-failure form -
+  onFailure Continue runs the remaining steps but still marks the document
+  failed, which fails the build at the end.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: OptionalCheck
+        action: ExecuteBash
+        onFailure: Ignore
+        inputs:
+          commands:
+            # Fails on a base image without htop; the step is recorded as
+            # IgnoredFailure, the document ends SuccessWithIgnoredFailure,
+            # and the build continues.
+            - rpm -q htop
+
+      - name: RequiredWork
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 'Still runs, and the document succeeds.'

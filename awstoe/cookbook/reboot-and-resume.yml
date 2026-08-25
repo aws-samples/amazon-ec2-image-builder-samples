@@ -1,0 +1,40 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: reboot-and-resume
+description: >-
+  Requests a reboot from inside a script and resumes cleanly. Exiting with
+  code 194 (3010 on Windows) tells the agent to reboot and rerun the same
+  step afterward, so the step keeps a reboot indicator to know which
+  invocation it's in. Don't run this one locally - a real reboot request
+  follows.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallThenReboot
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              if [ -f /var/tmp/reboot-indicator ]; then
+                echo 'Back after the reboot - finishing the step.'
+                rm -f /var/tmp/reboot-indicator
+                exit 0
+              fi
+              echo 'Simulating an install that needs a restart.'
+              touch /var/tmp/reboot-indicator
+              exit 194
+
+      - name: AfterReboot
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 'Runs only once the reboot completed and the step above re-ran.'
+
+  - name: validate
+    steps:
+      - name: IndicatorCleanedUp
+        action: ExecuteBash
+        inputs:
+          commands:
+            - test ! -f /var/tmp/reboot-indicator
