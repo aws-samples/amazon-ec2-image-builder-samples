@@ -232,6 +232,14 @@ Resources:
               snsTopicArn.$: "$.parameters.approvalTopicArn"
               payload: 'Inspect the build instance for this step execution, then approve (RESUME) or reject (STOP) the image.'
 
+          # Sanitize runs after the approval, so the approver can still
+          # reach the instance over SSM while the build is paused.
+          - name: SanitizeBuildInstance
+            action: SanitizeInstance
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
           - name: CreateOutputImage
             action: CreateImage
             onFailure: Abort

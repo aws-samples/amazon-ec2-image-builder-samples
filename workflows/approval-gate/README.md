@@ -18,7 +18,7 @@ aws imagebuilder send-workflow-step-action \
 
 The console offers the same controls: the Images page's **Waiting for action** tab lists every paused step, with resume and stop actions.
 
-`RESUME` continues to `CreateImage`; `STOP` ends the workflow and the build fails. If nobody responds, the step times out - 3 days by default, up to 7 via `timeoutSeconds` on the step - and the build fails.
+`RESUME` continues the workflow - the instance is sanitized, then the image is created; `STOP` ends the workflow and the build fails. If nobody responds, the step times out - 3 days by default, up to 7 via `timeoutSeconds` on the step - and the build fails.
 
 Details worth knowing:
 
