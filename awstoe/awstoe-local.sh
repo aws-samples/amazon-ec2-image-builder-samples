@@ -45,10 +45,12 @@ fetch_binary() {
     curl -sSf "${BASE_URL}/${platform}/${arch}/awstoe.sig" -o "$bin.sig"
     curl -sSf "${BASE_URL}/assets/awstoe.gpg" -o "$CACHE_DIR/awstoe.gpg"
     GNUPGHOME="$(mktemp -d)" export GNUPGHOME
-    gpg --quiet --import "$CACHE_DIR/awstoe.gpg"
+    # --no-autostart: verification needs no agent, and minimal gpg installs
+    # (like the run container's) don't ship one.
+    gpg --batch --no-autostart --quiet --import "$CACHE_DIR/awstoe.gpg"
     # Bind the check to the documented key fingerprint: a bare --verify exit
     # code passes with any key in the keyring.
-    gpg --status-fd 1 --verify "$bin.sig" "$bin" 2>/dev/null \
+    gpg --batch --no-autostart --status-fd 1 --verify "$bin.sig" "$bin" 2>/dev/null \
       | grep -q "VALIDSIG.*${AWSTOE_FINGERPRINT}" \
       || { rm -f "$bin"; die "signature verification failed"; }
     rm -rf "$GNUPGHOME"; unset GNUPGHOME
