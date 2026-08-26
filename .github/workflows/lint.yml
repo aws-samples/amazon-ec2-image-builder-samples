@@ -72,20 +72,23 @@ jobs:
           # awstoe is the engine that runs components on build instances.
           # Verify the binary against the AWSTOE signing key before running
           # it; the pinned fingerprint is published in the Image Builder docs.
-          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe
-          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe.sig
-          curl -sSf -O https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/assets/awstoe.gpg
-          gpg --import awstoe.gpg
+          # Download outside the checkout: the tree has an awstoe/ directory
+          # that a file named awstoe would collide with.
+          tool="$(mktemp -d)"
+          curl -sSf -o "$tool/awstoe" https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe
+          curl -sSf -o "$tool/awstoe.sig" https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/amd64/awstoe.sig
+          curl -sSf -o "$tool/awstoe.gpg" https://awstoe-us-east-1.s3.us-east-1.amazonaws.com/latest/assets/awstoe.gpg
+          gpg --import "$tool/awstoe.gpg"
           # Bind the verification to the pinned key: VALIDSIG carries the
           # signing key's fingerprint, so a keyring with extra keys can't
           # satisfy this check.
-          gpg --status-fd 1 --verify ./awstoe.sig ./awstoe \
+          gpg --status-fd 1 --verify "$tool/awstoe.sig" "$tool/awstoe" \
             | grep -q 'VALIDSIG.*F6DDE01C869FD63915E55742DEBDC156F5AEBC52'
-          chmod +x awstoe
+          chmod +x "$tool/awstoe"
           failed=0
           while IFS= read -rd '' doc; do
             echo "::group::$doc"
-            ./awstoe validate --documents "$doc" || failed=1
+            "$tool/awstoe" validate --documents "$doc" || failed=1
             echo "::endgroup::"
           done < changed.txt
           exit "$failed"

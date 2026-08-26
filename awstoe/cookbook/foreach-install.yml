@@ -1,0 +1,28 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+name: foreach-install
+description: >-
+  Runs one step once per list entry. Loop values are strings and must be
+  double-quoted where they're used. The validate phase asserts the installs
+  on the build instance.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallTools
+        action: ExecuteBash
+        loop:
+          forEach:
+            list: 'jq,tar,gzip'
+            delimiter: ','
+        inputs:
+          commands:
+            - dnf -y install "{{ loop.value }}"
+
+  - name: validate
+    steps:
+      - name: ToolsInstalled
+        action: ExecuteBash
+        inputs:
+          commands:
+            - rpm -q jq tar gzip

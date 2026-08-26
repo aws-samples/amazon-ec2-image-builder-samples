@@ -29,6 +29,7 @@ From there:
 | [Terraform/cross-account-amis](Terraform/cross-account-amis/) | The cross-account distribution sample in Terraform - component documents via file(), content-hash versioning, and the two-account apply flow |
 | [workflows/approval-gate](workflows/approval-gate/) | A build workflow that pauses for human approval before the image is created - WaitForAction, an SNS approval request, and the RESUME/STOP response flow |
 | [workflows/step-functions-integration](workflows/step-functions-integration/) | A Step Functions state machine validates the output AMI from outside - no test instance - alongside an on-instance test workflow in the same parallel group |
+| [awstoe](awstoe/) | Component patterns that are hard to get right the first time - reboot-and-resume, build-time secrets, cleanup overrides - plus a script that validates and runs component documents locally in seconds |
 
 ### CloudFormation - Linux AMIs
 
@@ -61,6 +62,8 @@ From there:
 | [hello-world](CDK/Linux/hello-world/) | Configuration-driven pipelines in CDK TypeScript: components loaded from local files or managed component ARNs, SNS build notifications, and the output AMI ID recorded in an SSM parameter |
 
 ### Components (AWSTOE)
+
+For a local component test loop and more component patterns, see [awstoe](awstoe/).
 
 | Sample | Platform | What it shows |
 |---|---|---|
