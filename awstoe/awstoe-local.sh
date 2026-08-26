@@ -15,6 +15,8 @@
 # the filesystem the component mutates is thrown away. If you know exactly
 # what a document does and want it to run on this host anyway, pass --host.
 set -euo pipefail
+# Without this, failures inside $( ) are invisible to set -e (bash 4.4+).
+shopt -s inherit_errexit 2>/dev/null || true
 
 REGION="${AWSTOE_REGION:-us-east-1}"
 BASE_URL="https://awstoe-${REGION}.s3.${REGION}.amazonaws.com/latest"
