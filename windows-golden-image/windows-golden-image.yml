@@ -1,0 +1,327 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder Windows golden image: a monthly Windows Server 2025
+  pipeline that patches through the UpdateOS action, bakes machine-scope
+  baseline configuration, and verifies the result on a fresh instance
+  launched from the sysprepped AMI - with optional EC2 Fast Launch.
+
+Parameters:
+  EnableFastLaunch:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Pre-provision the output AMI for EC2 Fast Launch. Launches temporary
+      instances and maintains snapshots that bill until you disable it - see
+      the README's Cost section.
+
+Conditions:
+  FastLaunchEnabled: !Equals [!Ref EnableFastLaunch, 'true']
+
+Resources:
+  # Receives the AWSTOE log bundle from each build; the CloudWatch groups
+  # below receive the streamed build output.
+  BuildLogBucket:
+    Type: AWS::S3::Bucket
+    # To keep the bucket when deleting the stack, set DeletionPolicy: Retain.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Build logs are only useful for recent troubleshooting - expire
+          # them so the bucket doesn't accumulate cost
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BuildLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
+  # The pipeline runs as this role instead of the service-linked role - the
+  # recommended pattern, and required for Fast Launch, which needs more than
+  # the service-linked role carries.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns: !If
+        - FastLaunchEnabled
+        # The execution policy's ARN has no service-role/ path prefix.
+        - - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+          - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2FastLaunchFullAccess'
+        - - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: ship-build-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  # Components run as NT AUTHORITY\SYSTEM, so baseline configuration
+  # belongs in machine scope. Changes use the native action modules;
+  # ExecutePowerShell is kept for assertions.
+  BaselineComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: windows-golden-image-baseline
+      # Components don't accept x wildcards at creation. Keep the version
+      # fixed - the service increments the build number behind it when the
+      # document changes.
+      Version: 1.0.0
+      Platform: Windows
+      Description: Applies machine-scope baseline configuration.
+      Data: |
+        name: windows-golden-image-baseline
+        description: Applies machine-scope baseline configuration.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: CreateBaselineFolder
+                action: CreateFolder
+                inputs:
+                  - path: C:\ProgramData\golden-image
+              - name: WriteBaselineFile
+                action: CreateFile
+                inputs:
+                  - path: C:\ProgramData\golden-image\baseline.txt
+                    content: baseline applied
+                    overwrite: true
+              - name: SetBaselineRegistry
+                action: SetRegistry
+                inputs:
+                  - path: HKLM:\SOFTWARE\GoldenImage
+                    name: BaselineVersion
+                    value: '1'
+                    type: SZ
+          - name: validate
+            steps:
+              - name: VerifyBaseline
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - |
+                      if (-not (Test-Path 'C:\ProgramData\golden-image\baseline.txt')) { exit 1 }
+                      if (-not (Get-ItemProperty -Path 'HKLM:\SOFTWARE\GoldenImage' -Name BaselineVersion -ErrorAction SilentlyContinue)) { exit 1 }
+
+  # The test phase runs on a fresh instance launched from the sysprepped
+  # AMI - the same first boot your users get - so the patch state is
+  # asserted here.
+  VerifyComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: windows-golden-image-verify
+      Version: 1.0.0
+      Platform: Windows
+      Description: Verifies baseline and patch state on the output AMI.
+      Data: |
+        name: windows-golden-image-verify
+        description: Verifies baseline and patch state on the output AMI.
+        schemaVersion: 1.0
+        phases:
+          - name: test
+            steps:
+              - name: VerifyImage
+                action: ExecutePowerShell
+                timeoutSeconds: 1800
+                inputs:
+                  commands:
+                    - |
+                      # Fail closed: without this, a Windows Update COM failure
+                      # would leave $pending empty and the assertion would pass
+                      # vacuously.
+                      $ErrorActionPreference = 'Stop'
+                      if (-not (Test-Path 'C:\ProgramData\golden-image\baseline.txt')) { Write-Host 'baseline file missing'; exit 1 }
+                      if (-not (Get-ItemProperty -Path 'HKLM:\SOFTWARE\GoldenImage' -Name BaselineVersion -ErrorAction SilentlyContinue)) { Write-Host 'baseline registry key missing'; exit 1 }
+                      $searcher = (New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher()
+                      $pending = $searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates
+                      Write-Host "pending software updates: $($pending.Count)"
+                      foreach ($u in $pending) { Write-Host " - $($u.Title)" }
+                      if ($pending.Count -gt 0) { exit 1 }
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: windows-golden-image
+      # Changing the recipe replaces it; the x placeholder auto-increments
+      # the version on each replacement.
+      Version: 1.0.x
+      # The managed base image tracks the monthly Windows Server 2025
+      # releases; the pipeline's dependency-update start condition rebuilds
+      # when a new one publishes. Building from the current month's base
+      # keeps the update pass small.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/windows-server-2025-english-full-base-x86/x.x.x'
+      Components:
+        # The managed patching component: one UpdateOS step with no timeout,
+        # and the reboot path the service recognizes and retries when Windows
+        # fires an unplanned second reboot mid-update. A hand-rolled reboot
+        # script gets none of that.
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-windows/x.x.x'
+        - ComponentArn: !GetAtt BaselineComponent.LatestVersion.Arn
+        - ComponentArn: !GetAtt VerifyComponent.LatestVersion.Arn
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            # Headroom for cumulative updates on top of the 30 GB base.
+            VolumeSize: 50
+            VolumeType: gp3
+            DeleteOnTermination: true
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: windows-golden-image
+      InstanceProfileName: !Ref InstanceProfile
+      # A c5.xlarge ran the full patch-and-verify build in about 21 minutes.
+      InstanceTypes:
+        - c5.xlarge
+      InstanceMetadataOptions:
+        HttpTokens: required
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref BuildLogBucket
+          S3KeyPrefix: windows-golden-image
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: windows-golden-image
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'windows-golden-image-{{ imagebuilder:buildDate }}'
+          FastLaunchConfigurations: !If
+            - FastLaunchEnabled
+            # No launch template: EC2 Fast Launch creates its own resources,
+            # which is what the execution role's EC2FastLaunchFullAccess is
+            # for. EC2ImageBuilderExecutionPolicy alone only permits
+            # EnableFastLaunch on resources tagged CreatedBy: EC2 Image Builder.
+            - - Enabled: true
+                # The service requires at least 6.
+                MaxParallelLaunches: 6
+                SnapshotConfiguration:
+                  TargetResourceCount: 1
+            - !Ref AWS::NoValue
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/windows-golden-image
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/windows-golden-image
+      RetentionInDays: 7
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: windows-golden-image
+      Description: Monthly patched and verified Windows Server 2025 golden image.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Updates land on the second Tuesday; the third-Monday build picks
+      # them up, and only when the base image or a component has updated.
+      Schedule:
+        ScheduleExpression: cron(0 9 ? * mon#3 *)
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  BuildLogBucketName:
+    Description: Bucket receiving the AWSTOE log bundle from each build.
+    Value: !Ref BuildLogBucket
+  InstanceProfileName:
+    Description: >-
+      Instance profile for the README's launch-contract test - it carries the
+      Session Manager permissions.
+    Value: !Ref InstanceProfile
