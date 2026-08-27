@@ -31,6 +31,7 @@ From there:
 | [workflows/step-functions-integration](workflows/step-functions-integration/) | A Step Functions state machine validates the output AMI from outside - no test instance - alongside an on-instance test workflow in the same parallel group |
 | [awstoe](awstoe/) | Component patterns that are hard to get right the first time - reboot-and-resume, build-time secrets, cleanup overrides - plus a script that validates and runs component documents locally in seconds |
 | [debugging](debugging/) | A build that fails on purpose, and the walkthrough that diagnoses it - where each failure class leaves evidence, the workflow execution APIs, and a Session Manager shell on the kept build instance |
+| [containers](containers/) | Container base images on a weekly pipeline - the build-host-vs-base-image distinction, Dockerfile template variables, ECR tagging strategy, multi-region replication, and a Windows Server 2025 Core variant (CloudFormation, plus a CDK app for the Linux pipeline) |
 
 ### CloudFormation - Linux AMIs
 
@@ -46,14 +47,6 @@ From there:
 | [cascading-images-with-dotnet-web-application](CloudFormation/Windows/cascading-images-with-dotnet-web-application/) | Golden image hierarchy - a baseline Windows image stack whose exported Image ARN feeds an application image stack; NSSM-managed Windows service |
 | [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/) | Updating the SSM Agent to the latest release during the build - the Windows Server 2025 variant of the multi-OS sample listed under Linux AMIs |
 | [windows-server-with-vscode](CloudFormation/Windows/windows-server-with-vscode/) | A custom component with build, validate, and test phases that installs an application (VS Code) on Windows Server 2025 |
-
-### CloudFormation - container images
-
-| Sample | What it shows |
-|---|---|
-| [amazon-linux-2-with-helloworld](CloudFormation/Docker/amazon-linux-2-with-helloworld/) | A complete container recipe: Dockerfile template, custom component, and distribution to Amazon ECR |
-| [ubuntu-dotnet-web-application](CloudFormation/Docker/ubuntu-dotnet-web-application/) | A container image hosting a .NET web application pulled from S3, on a daily dependency-update schedule |
-| [windows-dotnet-web-application](CloudFormation/Docker/windows-dotnet-web-application/) | A Windows Server container image hosting a .NET web application |
 
 ### CDK
 
@@ -81,6 +74,7 @@ Renamed or consolidated - update your links:
 - **amazon-linux-2-with-latest-ssm-agent**, **ubuntu-2004-with-latest-ssm-agent**, and **windows-server-with-latest-ssm-agent** are now one sample: [install-latest-ssm-agent](CloudFormation/install-latest-ssm-agent/).
 - **ansible-playbook-execution-amazon-linux-2** is now [ansible-playbook-execution-linux](Components/Linux/ansible-playbook-execution-linux/), updated for Amazon Linux 2023.
 - **windows-server-2016-with-vscode** is now [windows-server-with-vscode](CloudFormation/Windows/windows-server-with-vscode/), updated for Windows Server 2025.
+- **amazon-linux-2-with-helloworld**, **ubuntu-dotnet-web-application**, and **windows-dotnet-web-application** (the container samples) are replaced by the [containers](containers/) kit, rebuilt on current base images.
 
 ## Which IAM role does what
 
@@ -88,7 +82,7 @@ IAM setup is the most common source of first-build failures. Image Builder uses 
 
 | Role | Attached policies | Used for |
 |---|---|---|
-| Build instance profile | `EC2InstanceProfileForImageBuilder` + `AmazonSSMManagedInstanceCore` (add `EC2InstanceProfileForImageBuilderECRContainerBuilds` for container builds) | The EC2 instance that builds and tests your image. Components run with these permissions - S3 downloads, SSM parameter reads, etc. all come from here |
+| Build instance profile | `EC2InstanceProfileForImageBuilder` + `AmazonSSMManagedInstanceCore` (add `EC2InstanceProfileForImageBuilderECRContainerBuilds` for container builds - see [containers](containers/)) | The EC2 instance that builds and tests your image. Components run with these permissions - S3 downloads, SSM parameter reads, etc. all come from here |
 | Service-linked role (`AWSServiceRoleForImageBuilder`) | Managed by the service | Created automatically the first time you use Image Builder. Don't pass it as an execution role |
 | Execution role | `EC2ImageBuilderExecutionPolicy` | Custom workflows, SSM parameter output, and ISO imports. Create your own role with this policy rather than passing the service-linked role. Note that both this policy and the service-linked role scope `ssm:PutParameter` to the `/imagebuilder/*` parameter path - writing output parameters outside that path requires a custom execution role with an added inline statement, since the service-linked role can't be modified |
 | Lifecycle execution role | `EC2ImageBuilderLifecycleExecutionPolicy` | Lifecycle policies that deprecate, disable, and delete old images |

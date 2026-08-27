@@ -1,0 +1,153 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder Windows container pipeline: builds a Windows Server 2025
+  Core base container image from the Microsoft Container Registry and pushes
+  it to Amazon ECR. The Linux pipeline's README covers the shared concepts.
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: container-sample-windows
+      # EmptyOnDelete destroys every image with the stack - drop it for a
+      # production repository.
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  BaselineComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: container-sample-windows-baseline
+      Version: 1.0.0
+      Platform: Windows
+      Description: Stamps a build marker into the image and verifies it.
+      Data: |
+        name: container-sample-windows-baseline
+        description: Stamps a build marker into the image and verifies it.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: StampMarker
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - New-Item -Path C:\container-sample.txt -Value "built by EC2 Image Builder" -Force
+          - name: validate
+            steps:
+              - name: VerifyMarker
+                action: ExecutePowerShell
+                inputs:
+                  commands:
+                    - if (-not (Test-Path C:\container-sample.txt)) { exit 1 }
+
+  ContainerRecipe:
+    Type: AWS::ImageBuilder::ContainerRecipe
+    Properties:
+      Name: container-sample-windows
+      Version: 1.0.x
+      ContainerType: DOCKER
+      # A registry URI parent. Non-Image Builder parents need PlatformOverride,
+      # and Windows additionally needs ImageOsVersionOverride.
+      ParentImage: mcr.microsoft.com/windows/servercore:ltsc2025
+      PlatformOverride: Windows
+      ImageOsVersionOverride: Microsoft Windows Server 2025
+      Components:
+        - ComponentArn: !GetAtt BaselineComponent.LatestVersion.Arn
+      DockerfileTemplateData: |
+        FROM {{{ imagebuilder:parentImage }}}
+        {{{ imagebuilder:environments }}}
+        {{{ imagebuilder:components }}}
+      TargetRepository:
+        Service: ECR
+        RepositoryName: !Ref Repository
+      WorkingDirectory: C:/
+      # Windows containers need a Windows build host whose OS version matches
+      # the container base. The ECS-optimized Windows AMIs publish under
+      # /aws/service/ami-windows-latest/, not /aws/service/ecs/optimized-ami/.
+      InstanceConfiguration:
+        Image: 'ssm:/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-ECS_Optimized/image_id'
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: container-sample-windows
+      InstanceProfileName: !Ref InstanceProfile
+      # Windows container builds move multi-gigabyte base layers - a larger
+      # instance keeps that tolerable.
+      InstanceTypes:
+        - c5.xlarge
+      InstanceMetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/container-sample-windows
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/container-sample-windows
+      RetentionInDays: 7
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: container-sample-windows
+      Description: Weekly Windows Server 2025 Core base container image.
+      ContainerRecipeArn: !Ref ContainerRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # A registry URI parent isn't dependency-tracked the way managed images
+      # are, so the schedule rebuilds unconditionally.
+      Schedule:
+        ScheduleExpression: cron(0 9 ? * mon *)
+        PipelineExecutionStartCondition: EXPRESSION_MATCH_ONLY
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  RepositoryUri:
+    Description: The ECR repository the pipeline pushes to.
+    Value: !GetAtt Repository.RepositoryUri
