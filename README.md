@@ -30,6 +30,7 @@ From there:
 | [workflows/approval-gate](workflows/approval-gate/) | A build workflow that pauses for human approval before the image is created - WaitForAction, an SNS approval request, and the RESUME/STOP response flow |
 | [workflows/step-functions-integration](workflows/step-functions-integration/) | A Step Functions state machine validates the output AMI from outside - no test instance - alongside an on-instance test workflow in the same parallel group |
 | [awstoe](awstoe/) | Component patterns that are hard to get right the first time - reboot-and-resume, build-time secrets, cleanup overrides - plus a script that validates and runs component documents locally in seconds |
+| [debugging](debugging/) | A build that fails on purpose, and the walkthrough that diagnoses it - where each failure class leaves evidence, the workflow execution APIs, and a Session Manager shell on the kept build instance |
 
 ### CloudFormation - Linux AMIs
 
