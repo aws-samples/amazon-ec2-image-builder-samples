@@ -1,0 +1,227 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder debugging walkthrough: a minimal pipeline whose one
+  component fails on purpose, with the infrastructure configured to keep the
+  failed build instance running for inspection. The README traces the failure
+  through every place the service leaves evidence, then fixes the build.
+
+Parameters:
+  PackageName:
+    Type: String
+    Default: htpd
+    # Valid package-name characters only - the value lands in a shell command
+    # on the build instance.
+    AllowedPattern: '^[a-zA-Z0-9._+-]+$'
+    Description: >-
+      Package the build component installs. The default is a deliberate typo
+      so the first build fails. Redeploy with 'httpd' to make it succeed.
+
+Resources:
+  # Build logs land in two independent places: this bucket receives the
+  # AWSTOE bundle shipped from the instance once components run, and the
+  # CloudWatch group below receives the service-written build narrative
+  # from the moment the build starts.
+  BuildLogBucket:
+    Type: AWS::S3::Bucket
+    # To keep the bucket when deleting the stack, set DeletionPolicy: Retain.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Build logs are only useful for recent troubleshooting - expire
+          # them so the bucket doesn't accumulate cost
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BuildLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        # AmazonSSMManagedInstanceCore is what makes the build run at all -
+        # and it's also exactly what Session Manager needs, so you can open
+        # a shell on a kept build instance with no key pair and no open ports.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      Policies:
+        - PolicyName: ship-build-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  InstallComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: debugging-sample-install
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The package name flows in through a component parameter,
+      # so fixing it never has to touch this resource.
+      Version: 1.0.0
+      Platform: Linux
+      Description: Installs one package and verifies the install.
+      Data: |
+        name: debugging-sample-install
+        description: Installs one package and verifies the install.
+        schemaVersion: 1.0
+        parameters:
+          - package:
+              type: string
+              description: Package to install.
+        phases:
+          - name: build
+            steps:
+              - name: InstallPackage
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - dnf -y install {{ package }}
+          - name: validate
+            steps:
+              - name: VerifyInstalled
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - rpm -q {{ package }}
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: debugging-sample
+      # Changing PackageName replaces the recipe (recipes are immutable);
+      # the x placeholder auto-increments the version on each replacement.
+      Version: 1.0.x
+      # The public SSM parameter resolves to the latest AL2023 AMI at build
+      # time - the resolution is the first thing the build's log stream shows.
+      ParentImage: 'ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+      Components:
+        - ComponentArn: !GetAtt InstallComponent.LatestVersion.Arn
+          Parameters:
+            - Name: package
+              Value:
+                - !Ref PackageName
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: debugging-sample
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      # The point of this sample: when a build or test step fails, the
+      # instance stays running for inspection - and keeps billing until you
+      # terminate it (the README's Cleanup covers both).
+      TerminateInstanceOnFailure: false
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref BuildLogBucket
+          S3KeyPrefix: debugging-sample
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: debugging-sample
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'debugging-sample-{{ imagebuilder:buildDate }}'
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/debugging-sample
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/debugging-sample
+      RetentionInDays: 7
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: debugging-sample
+      Description: Builds fail until the PackageName stack parameter is fixed.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  BuildLogBucketName:
+    Description: Bucket receiving the AWSTOE log bundle from each build.
+    Value: !Ref BuildLogBucket
