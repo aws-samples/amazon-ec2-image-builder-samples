@@ -9,7 +9,7 @@ The service checks a component's YAML when you create it - but whether the compo
 ./awstoe-local.sh run cookbook/conditional-install.yml --phases build
 ```
 
-`validate` runs natively and catches unknown actions, misspelled fields, missing phases, and undeclared `{{ }}` references - most of what `CreateComponent` checks, here without a deploy, credentials, or a network, so it fits a pre-commit hook or CI. `run` is what needs no service equivalent: it executes the document inside an Amazon Linux 2023 container (built from the [Dockerfile](Dockerfile)) and drops the same logs a real build produces under `./awstoe-logs/` - on failure the script prints the console tail. `--parameters name=value,name2=value2` passes component parameters.
+`validate` runs natively and catches unknown actions, misspelled fields, missing phases, and undeclared `{{ }}` references - most of what `CreateComponent` checks, here without a deploy, credentials, or a network, so it fits a pre-commit hook or CI. It checks against the host's action modules by default; `--os-platforms windows` (or `linux`, `darwin`) validates a document for another platform, so Windows components check out from a Linux machine. `run` is what needs no service equivalent: it executes the document inside an Amazon Linux 2023 container (built from the [Dockerfile](Dockerfile)) and drops the same logs a real build produces under `./awstoe-logs/` - on failure the script prints the console tail. `--parameters name=value,name2=value2` passes component parameters.
 
 Components run with no sandbox, and a rebooting step writes to your crontab and calls `shutdown` - inside the container neither touches your machine, the filesystem the component mutates is thrown away, and the environment matches your pipeline's Amazon Linux build instances. `run --host` skips the container if you know exactly what a document does; it refuses to run as root, and local runs block the `Reboot` action module in both modes, though a bare `exit 194` still gets through on the host. The container isn't a sandbox for components you don't trust.
 
@@ -17,7 +17,7 @@ The script verifies the binary's GPG signature against the fingerprint published
 
 ### What local runs can't do
 
-- Windows documents don't validate on Linux (or the reverse) - the action registry is host-specific. `ExecutePowerShell` on a Linux machine fails with `Unsupported action`.
+- This script's `run` executes Linux documents only, because its container is Amazon Linux 2023. Windows documents still validate from Linux (`--os-platforms windows`); executing one takes `awstoe.exe` on a Windows machine.
 - Required parameters you don't pass render as empty strings locally; the service rejects them at build time.
 - Actions that call AWS (`S3Download`, the secrets pattern, an S3-hosted document) need real credentials - export them as environment variables and they pass into the container. Everything else runs offline - set `AWS_EC2_METADATA_DISABLED=true` off-EC2 to skip a metadata-probe delay.
 - A local run proves your document's logic, not the image: base-image contents, the instance profile, and the post-build cleanup only exist in a real build.
