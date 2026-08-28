@@ -5,7 +5,7 @@
 # Local AWSTOE runner: validate and execute EC2 Image Builder component
 # documents in seconds, without a pipeline build.
 #
-#   ./awstoe-local.sh validate <doc.yml> [more docs...]
+#   ./awstoe-local.sh validate [--os-platforms windows|linux|darwin] <doc.yml> [more docs...]
 #   ./awstoe-local.sh run <doc.yml> [--phases build,validate] [--parameters n=v,...]
 #
 # validate runs natively. run executes inside an Amazon Linux 2023 container:
@@ -82,10 +82,19 @@ run_in_docker() {
 }
 
 cmd_validate() {
+  local platforms=""
+  if [ "${1:-}" = "--os-platforms" ]; then
+    [ "$#" -ge 2 ] || die "--os-platforms needs a value (windows, linux, or darwin)"
+    platforms="$2"; shift 2
+  fi
   [ "$#" -ge 1 ] || die "validate needs at least one document (awstoe exits 0 on an empty list)"
   local bin; bin="$(fetch_binary)"
   local docs; docs="$(IFS=,; echo "$*")"
-  "$bin" validate --documents "$docs"
+  if [ -n "$platforms" ]; then
+    "$bin" validate --documents "$docs" --os-platforms "$platforms"
+  else
+    "$bin" validate --documents "$docs"
+  fi
 }
 
 cmd_run() {
@@ -121,7 +130,7 @@ cmd_run() {
   exit "$rc"
 }
 
-[ "$#" -ge 1 ] || die "usage: $0 validate <docs...> | run [--host] <doc> [args]"
+[ "$#" -ge 1 ] || die "usage: $0 validate [--os-platforms windows|linux|darwin] <docs...> | run [--host] <doc> [args]"
 sub="$1"; shift
 case "$sub" in
   validate) cmd_validate "$@" ;;
