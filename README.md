@@ -32,6 +32,7 @@ From there:
 | [awstoe](awstoe/) | Component patterns that are hard to get right the first time - reboot-and-resume, build-time secrets, cleanup overrides - plus a script that validates and runs component documents locally in seconds |
 | [debugging](debugging/) | A build that fails on purpose, and the walkthrough that diagnoses it - where each failure class leaves evidence, the workflow execution APIs, and a Session Manager shell on the kept build instance |
 | [containers](containers/) | Container base images on a weekly pipeline - the build-host-vs-base-image distinction, Dockerfile template variables, ECR tagging strategy, multi-region replication, and a Windows Server 2025 Core variant (CloudFormation, plus a CDK app for the Linux pipeline) |
+| [windows-golden-image](windows-golden-image/) | A monthly Windows Server 2025 golden image - reboot-safe patching through UpdateOS, what the service's sysprep already handles, which customization scopes survive into the AMI, verification on a fresh instance, and optional EC2 Fast Launch |
 
 ### CloudFormation - Linux AMIs
 
