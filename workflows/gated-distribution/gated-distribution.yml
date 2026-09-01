@@ -1,0 +1,355 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder gated distribution: a custom distribution workflow that
+  pauses after the image is built and tested, and releases it - copying the
+  AMI to a second region, optionally sharing it, and publishing the AMI IDs
+  to SSM parameters - only after an explicit approval.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional email address to subscribe to the approval topic. Leave empty
+      to skip the subscription and read notifications from the topic through
+      other means.
+  SecondRegion:
+    Type: String
+    Default: us-east-1
+    Description: >-
+      Region the approved AMI is copied to, in addition to the stack's own
+      region. Must be an enabled region in the same partition, and must
+      differ from the region the stack deploys in - override the default
+      when deploying in us-east-1 or outside the aws partition.
+  LaunchPermissionAccountId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[0-9]{12}$'
+    Description: >-
+      Optional account ID granted permission to launch the second-region
+      copy. Share only with accounts you trust - the grantee can read the
+      image contents. Leave empty to skip the sharing step.
+
+Rules:
+  SecondRegionDiffers:
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SecondRegion, !Ref AWS::Region]]
+        AssertDescription: >-
+          SecondRegion must differ from the region the stack deploys in.
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref NotificationEmail, '']]
+
+Resources:
+  # ---------------------------------------------------------------------
+  # The execution role. Required whenever custom workflows are attached.
+  # The managed policy covers the workflow actions - including the SSM
+  # parameter writes, which it scopes to the /imagebuilder/* path; the
+  # encrypted topic additionally needs the key grant, and the scoped
+  # sns:Publish keeps the delta explicit.
+  # ---------------------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: ApprovalNotifications
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The service publishes the WaitForAction notification as this
+              # role, so it needs the topic and its encryption key.
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref ApprovalTopic
+              - Effect: Allow
+                Action:
+                  - kms:GenerateDataKey*
+                  - kms:Decrypt
+                Resource:
+                  - !GetAtt NotificationKey.Arn
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # ---------------------------------------------------------------------
+  # The approval topic. The WaitForAction step publishes here through the
+  # execution role; approvers reply with send-workflow-step-action.
+  # ---------------------------------------------------------------------
+  NotificationKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Encrypts the gated-distribution notification topic
+      EnableKeyRotation: true
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          # Keeps the key manageable and lets same-account IAM policies -
+          # like the execution role's grant - take effect.
+          - Sid: EnableIAMUserPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  ApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: gated-distribution-notifications
+      KmsMasterKeyId: !GetAtt NotificationKey.Arn
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref ApprovalTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/gated-distribution
+      RetentionInDays: 30
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/gated-distribution
+      RetentionInDays: 30
+
+  # ---------------------------------------------------------------------
+  # A minimal component so the recipe has something to build.
+  # ---------------------------------------------------------------------
+  BuildInfoComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: gated-distribution-build-info
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the same
+      # version when the document changes, and the recipe's LatestVersion
+      # reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: gated-distribution-build-info
+        description: Writes build metadata into the image.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: WriteBuildInfo
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - mkdir -p /opt/gated-distribution
+                    - date -u '+Built on %Y-%m-%dT%H:%M:%SZ' > /opt/gated-distribution/build-info.txt
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: gated-distribution
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair.
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image at
+      # build time.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt BuildInfoComponent.LatestVersion.Arn
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: gated-distribution
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here.
+
+  # ---------------------------------------------------------------------
+  # The attached distribution configuration. It does two jobs: its
+  # build-region entry names the output AMI when the image is created
+  # (the cleanup glob depends on that name), and it's the fallback for
+  # the workflow - delete the DistributeImage step's distributions input
+  # and the step uses this configuration instead.
+  # ---------------------------------------------------------------------
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: gated-distribution
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'gated-distribution-{{ imagebuilder:buildDate }}'
+
+  # ---------------------------------------------------------------------
+  # The distribution workflow. Nothing leaves the pipeline until the
+  # approval: the AMI exists and passed its tests, but it stays unshared,
+  # uncopied, and unpublished while the WaitForAction step waits - with no
+  # instance running, unlike a build-stage gate.
+  # ---------------------------------------------------------------------
+  DistributionWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: gated-distribution
+      # Workflows version like components: concrete at creation, x wildcards
+      # when referencing.
+      Version: 1.0.0
+      Type: DISTRIBUTION
+      Data: !Sub |
+        name: gated-distribution
+        description: Releases the tested AMI only after an explicit approval.
+        schemaVersion: 1.0
+
+        parameters:
+          - name: approvalTopicArn
+            type: string
+            description: SNS topic the release-approval request is published to.
+          - name: launchPermissionAccountId
+            type: string
+            default: ''
+            description: Optional account ID granted launch permission on the second-region copy.
+
+        steps:
+          # Publishes to the topic and pauses (default 3 days, 7-day max via
+          # timeoutSeconds). RESUME releases the image; STOP fails the build
+          # with nothing distributed. {{ }} interpolation inside a string
+          # needs no .$ suffix on the key - .$ is for whole-value JSONPath.
+          - name: ApproveRelease
+            action: WaitForAction
+            onFailure: Abort
+            inputs:
+              snsTopicArn.$: "$.parameters.approvalTopicArn"
+              payload: 'AMI {{ $.workflowOutputs.ImageId }} passed its tests. RESUME releases it; STOP releases nothing.'
+
+          # Inline distributions take priority over the attached distribution
+          # configuration; omit them and the step falls back to it.
+          - name: DistributeCopies
+            action: DistributeImage
+            onFailure: Abort
+            inputs:
+              distributions:
+                - region: ${AWS::Region}
+                  amiTags:
+                    Release: approved
+                - region: ${SecondRegion}
+                  name: 'gated-distribution-{{ imagebuilder:buildDate }}'
+                  amiTags:
+                    Release: approved
+
+          # Runs only when an account ID was provided - the conditional skips
+          # the step cleanly otherwise. Sharing lives here: launch permissions
+          # belong to ModifyImageAttributes, not DistributeImage.
+          - name: GrantLaunchPermission
+            action: ModifyImageAttributes
+            onFailure: Abort
+            if:
+              not:
+                stringEquals: ''
+                value: "$.parameters.launchPermissionAccountId"
+            inputs:
+              distributedImages.$: "$.stepOutputs.DistributeCopies.distributedImages"
+              attributes:
+                - region: ${SecondRegion}
+                  launchPermission:
+                    userIds:
+                      - '{{ $.parameters.launchPermissionAccountId }}'
+
+          # Publishes each region's AMI ID where launch templates and other
+          # stacks can consume it with resolve:ssm.
+          - name: PublishParameters
+            action: ApplyImageConfigurations
+            onFailure: Abort
+            inputs:
+              distributedImages.$: "$.stepOutputs.DistributeCopies.distributedImages"
+              configurations:
+                - region: ${AWS::Region}
+                  ssmParameterConfigurations:
+                    - parameterName: /imagebuilder/gated-distribution/ami
+                      dataType: aws:ec2:image
+                - region: ${SecondRegion}
+                  ssmParameterConfigurations:
+                    - parameterName: /imagebuilder/gated-distribution/ami
+                      dataType: aws:ec2:image
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: gated-distribution
+      Description: Builds and tests an image, then holds it for release approval.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Setting Workflows replaces the defaults: this pipeline runs the
+      # Amazon-managed build and test workflows, then the custom
+      # distribution workflow. One build and one distribution workflow per
+      # pipeline; only test workflows can repeat.
+      Workflows:
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/build/build-image/x.x.x'
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/test/test-image/x.x.x'
+        - WorkflowArn: !GetAtt DistributionWorkflow.Arn
+          Parameters:
+            - Name: approvalTopicArn
+              Value:
+                - !Ref ApprovalTopic
+            - Name: launchPermissionAccountId
+              Value:
+                - !Ref LaunchPermissionAccountId
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  ApprovalTopicArn:
+    Description: Topic that receives the release-approval requests.
+    Value: !Ref ApprovalTopic
