@@ -1,0 +1,335 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder macOS golden image: a pipeline that builds a customized
+  macOS AMI on an EC2 Mac Dedicated Host - the host placement wiring, a
+  Homebrew baseline component, and a test phase served by the same pinned
+  host. The host can be allocated by the stack or brought in as a parameter.
+
+Parameters:
+  MacInstanceType:
+    Type: String
+    Default: mac2-m2.metal
+    Description: >-
+      EC2 Mac instance type. Your account must be entitled for the family and
+      the Availability Zone must have capacity - see the README's "The
+      Dedicated Host comes first" section.
+  BaseImageName:
+    Type: String
+    Default: macos-sequoia-arm64
+    Description: >-
+      Managed base image name. Must match the instance type's architecture -
+      arm64 names for Apple silicon types, x86 names for mac1.metal.
+  AvailabilityZone:
+    Type: String
+    Description: >-
+      Availability Zone for the Dedicated Host. Must match the subnet's zone
+      and offer the instance type.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: A subnet in the same Availability Zone as the host.
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      Security group for the build instance (the API requires one whenever a
+      subnet is specified). No inbound rules are needed - the SSM agent makes
+      outbound connections only.
+  HostId:
+    Type: String
+    Default: ''
+    Description: >-
+      An already-allocated Dedicated Host to build on. Leave empty to have the
+      stack allocate one - note the 24-hour minimum allocation in the README's
+      Cost section before choosing that path.
+  TestAfterBuild:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Run the test phase on a fresh instance launched from the output AMI.
+      The test instance launches on the same host once it finishes scrubbing
+      from the build - that wait runs about 40 minutes on Intel hosts and
+      longer on Apple silicon. Set false to skip tests and end at the build.
+
+Conditions:
+  AllocateHost: !Equals [!Ref HostId, '']
+  TestsEnabled: !Equals [!Ref TestAfterBuild, 'true']
+
+Resources:
+  # Receives the AWSTOE log bundle from each build; the CloudWatch groups
+  # below receive the streamed build output.
+  BuildLogBucket:
+    Type: AWS::S3::Bucket
+    # To keep the bucket when deleting the stack, set DeletionPolicy: Retain.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Build logs are only useful for recent troubleshooting - expire
+          # them so the bucket doesn't accumulate cost
+          - Id: ExpireBuildLogs
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+
+  LogBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BuildLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnforceTls
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: EnforceTlsVersion
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: 1.2
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: ship-build-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::${BuildLogBucket}/*'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  # Allocated only when no HostId is supplied. The host bills a 24-hour
+  # minimum (Apple license requirement) and cannot be released before that -
+  # deleting the stack inside the first 24 hours fails on this resource.
+  DedicatedHost:
+    Type: AWS::EC2::Host
+    Condition: AllocateHost
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      InstanceType: !Ref MacInstanceType
+      # The pipeline targets the host by ID, which works regardless of
+      # auto-placement; off keeps unrelated untargeted launches from
+      # landing on it.
+      AutoPlacement: 'off'
+
+  # Components run as root on macOS. The AWS macOS AMIs ship with Homebrew,
+  # the AWS CLI, the SSM agent, and Xcode Command Line Tools preinstalled -
+  # brew runs as the ec2-user it was installed for, not root.
+  BaselineComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: macos-golden-image-baseline
+      # Components don't accept x wildcards at creation. Keep the version
+      # fixed - the service increments the build number behind it when the
+      # document changes.
+      Version: 1.0.0
+      Platform: macOS
+      Description: Installs a Homebrew package and writes a build marker.
+      Data: |
+        name: macos-golden-image-baseline
+        description: Installs a Homebrew package and writes a build marker.
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: CreateMarkerFolder
+                action: CreateFolder
+                inputs:
+                  - path: /usr/local/lib/golden-image
+              - name: WriteMarker
+                action: CreateFile
+                inputs:
+                  - path: /usr/local/lib/golden-image/baseline.txt
+                    content: baseline applied
+                    overwrite: true
+              - name: InstallJq
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -e
+                      sudo -iu ec2-user brew install jq
+                      sudo -iu ec2-user brew list --versions jq
+          - name: validate
+            steps:
+              - name: AssertBaseline
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -e
+                      test -f /usr/local/lib/golden-image/baseline.txt
+                      sudo -iu ec2-user brew list --versions jq
+
+  # The test phase runs on a fresh instance launched from the output AMI,
+  # on the same host once it finishes scrubbing from the build.
+  VerifyComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: macos-golden-image-verify
+      Version: 1.0.0
+      Platform: macOS
+      Description: Asserts the baseline on a fresh instance from the output AMI.
+      Data: |
+        name: macos-golden-image-verify
+        description: Asserts the baseline on a fresh instance from the output AMI.
+        schemaVersion: 1.0
+        phases:
+          - name: test
+            steps:
+              - name: AssertOnFreshInstance
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -e
+                      test -f /usr/local/lib/golden-image/baseline.txt
+                      sudo -iu ec2-user brew list --versions jq
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: macos-golden-image
+      # Changing the recipe replaces it; the x placeholder auto-increments
+      # the version on each replacement.
+      Version: 1.0.x
+      # The managed base image tracks AWS's macOS AMI releases; x.x.x always
+      # resolves to the newest. Building on a macOS version newer than the
+      # latest AWS-published AMI produces an AMI that won't boot on other
+      # hosts - stay on the managed base.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${BaseImageName}/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt BaselineComponent.LatestVersion.Arn
+        - ComponentArn: !GetAtt VerifyComponent.LatestVersion.Arn
+
+  # The placement block is what makes macOS builds work: Mac instances only
+  # run on Dedicated Hosts, so tenancy is host. Pinning the HostId matters
+  # beyond just placement: with a pinned host, Image Builder waits for the
+  # host to finish scrubbing after the build instance terminates, then
+  # launches the test instance on it - one host serves the whole pipeline.
+  # Without a hostId, launches auto-place and don't wait for scrubbing hosts.
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: macos-golden-image
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - !Ref MacInstanceType
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # The API requires a security group whenever a subnet is specified.
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      Placement:
+        Tenancy: host
+        HostId: !If [AllocateHost, !Ref DedicatedHost, !Ref HostId]
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref BuildLogBucket
+          S3KeyPrefix: macos-golden-image
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: macos-golden-image
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'macos-golden-image-{{ imagebuilder:buildDate }}'
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/macos-golden-image
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/macos-golden-image
+      RetentionInDays: 7
+
+  # No schedule: a scheduled pipeline would launch onto a host you may have
+  # already released. Start builds explicitly while a host is allocated.
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: macos-golden-image
+      Description: Customized macOS image built on an EC2 Mac Dedicated Host.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      # Tests default on; false ends the pipeline at the build instance and
+      # skips the scrub wait before the test launch.
+      ImageTestsConfiguration: !If
+        - TestsEnabled
+        - !Ref AWS::NoValue
+        - ImageTestsEnabled: false
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  DedicatedHostId:
+    Description: The Dedicated Host the build runs on.
+    Value: !If [AllocateHost, !Ref DedicatedHost, !Ref HostId]
+  BuildLogBucketName:
+    Description: Bucket receiving the AWSTOE log bundle from each build.
+    Value: !Ref BuildLogBucket

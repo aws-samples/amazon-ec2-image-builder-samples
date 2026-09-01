@@ -33,6 +33,7 @@ From there:
 | [debugging](debugging/) | A build that fails on purpose, and the walkthrough that diagnoses it - where each failure class leaves evidence, the workflow execution APIs, and a Session Manager shell on the kept build instance |
 | [containers](containers/) | Container base images on a weekly pipeline - the build-host-vs-base-image distinction, Dockerfile template variables, ECR tagging strategy, multi-region replication, and a Windows Server 2025 Core variant (CloudFormation, plus a CDK app for the Linux pipeline) |
 | [windows-golden-image](windows-golden-image/) | A monthly Windows Server 2025 golden image - reboot-safe patching through UpdateOS, what the service's sysprep already handles, which customization scopes survive into the AMI, verification on a fresh instance, and optional EC2 Fast Launch |
+| [macos-golden-image](macos-golden-image/) | A customized macOS AMI built on an EC2 Mac Dedicated Host - the placement wiring, optional in-stack host allocation, the 24-hour-minimum cost model, and how one pinned host serves both the build and test phases |
 
 ### CloudFormation - Linux AMIs
 
