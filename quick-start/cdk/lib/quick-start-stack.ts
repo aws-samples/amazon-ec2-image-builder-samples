@@ -53,9 +53,9 @@ export class QuickStartStack extends cdk.Stack {
     // survived into the image.
     const buildInfoComponent = new imagebuilder.Component(this, 'BuildInfoComponent', {
       componentName: 'quick-start-cdk-build-info',
-      // Components don't accept x wildcards. Keep the version fixed - when
-      // the document changes, the service increments the build number behind
-      // the same version (1.0.0/1, 1.0.0/2, ...), so updates deploy without
+      // Creating a component needs a concrete version (x wildcards are for
+      // references). When the document changes, the service increments the
+      // build number behind the same version, so updates deploy without
       // editing this value.
       componentVersion: '1.0.0',
       platform: imagebuilder.Platform.LINUX,

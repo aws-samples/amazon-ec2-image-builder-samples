@@ -126,6 +126,8 @@ Resources:
     Properties:
       Name: cross-account-distribution-sample
       InstanceProfileName: !Ref InstanceProfile
+      InstanceMetadataOptions:
+        HttpTokens: required
       # Without a default VPC, or to use a different VPC, set a subnet and the
       # security groups to use with it:
       # SubnetId: subnet-...

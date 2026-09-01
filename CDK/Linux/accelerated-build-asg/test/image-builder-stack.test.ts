@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
 import * as cdk from 'aws-cdk-lib/core';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { ImageBuilderStack } from '../lib/image-builder-stack';

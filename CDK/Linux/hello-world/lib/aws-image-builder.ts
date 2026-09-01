@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
 import { Annotations, Aws, CfnMapping, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { ISecurityGroup } from 'aws-cdk-lib/aws-ec2';
 import {

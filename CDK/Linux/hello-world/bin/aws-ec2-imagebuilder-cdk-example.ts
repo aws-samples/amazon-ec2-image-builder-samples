@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
 import { App, Aws } from 'aws-cdk-lib';
 import { ImageBuilderStack } from '../lib/aws-image-builder-stack';
 const accountId = process.env.CDK_DEFAULT_ACCOUNT;
