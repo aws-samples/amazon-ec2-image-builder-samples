@@ -131,9 +131,9 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: quick-start-cfn-build-info
-      # Components don't accept x wildcards. Keep the version fixed - when the
-      # document changes, the service increments the build number behind the
-      # same version (1.0.0/1, 1.0.0/2, ...), and the recipe's LatestVersion
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). When the document changes, the service increments the
+      # build number behind the same version, and the recipe's LatestVersion
       # reference picks that up without editing this value.
       Version: 1.0.0
       Platform: Linux

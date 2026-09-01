@@ -1,3 +1,5 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: MIT-0
 const mockSend = jest.fn();
 
 jest.mock('@aws-sdk/client-ec2', () => ({

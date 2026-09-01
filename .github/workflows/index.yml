@@ -32,8 +32,8 @@ jobs:
               dirs[:] = [d for d in dirs if not d.startswith('.') and d != 'node_modules']
               if root == '.':
                   continue
-              # a sample is a directory with a README plus other files
-              if 'README.md' in files and len(files) > 1:
+              # a sample is a directory with a README
+              if 'README.md' in files:
                   rel = root[2:]
                   if f']({rel}/)' not in readme and f']({rel})' not in readme:
                       missing.append(rel)
