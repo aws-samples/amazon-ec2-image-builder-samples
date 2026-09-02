@@ -1,0 +1,510 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder pipeline that builds its AMI with HashiCorp Packer: a
+  custom build workflow runs the Packer binary on the build instance, hands
+  the resulting AMI back to the service through the workflow's ImageId
+  output, and the managed test stage and distribution operate on the
+  Packer-built AMI like any other build.
+
+Parameters:
+  PackerVersion:
+    Type: String
+    Default: 1.16.0
+    AllowedPattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    Description: >-
+      Packer release to install on the build instance, downloaded from
+      releases.hashicorp.com and verified against the release's SHA256SUMS
+      file.
+  LaunchPermissionAccountId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[0-9]{12}$'
+    Description: >-
+      Optional account ID granted permission to launch the output AMI
+      through the distribution configuration. Share only with accounts you
+      trust - the grantee can read the image contents. Leave empty to skip.
+
+Conditions:
+  HasLaunchAccount: !Not [!Equals [!Ref LaunchPermissionAccountId, '']]
+
+Resources:
+  # ---------------------------------------------------------------------
+  # The bucket that holds the Packer configuration. The run-packer
+  # component downloads everything under packer/ into its working
+  # directory, so auxiliary files - scripts, var files - travel along
+  # with the template.
+  # ---------------------------------------------------------------------
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyPlaintextAccess
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ConfigBucket.Arn
+              - !Sub '${ConfigBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: DenyOldTlsVersions
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ConfigBucket.Arn
+              - !Sub '${ConfigBucket.Arn}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: '1.2'
+
+  # ---------------------------------------------------------------------
+  # The execution role. Required whenever custom workflows are attached.
+  # The managed policy already covers this template's workflow actions,
+  # including the RunCommand step - it allows ssm:SendCommand for the
+  # AWS-RunShellScript document on instances the service tagged.
+  # ---------------------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+
+  # ---------------------------------------------------------------------
+  # The build instance's role. Packer picks up these credentials from the
+  # instance profile, so the role carries the EC2 permissions Packer's
+  # amazon-ebs builder documents as its minimal set - without them the
+  # build fails at "Launching a source AWS instance" with
+  # UnauthorizedOperation.
+  # ---------------------------------------------------------------------
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: PackerAmazonEbsBuilder
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The minimal policy from Packer's amazon plugin
+              # documentation. Resource-level scoping isn't practical
+              # here: Packer creates and deletes its own temporary key
+              # pairs, security groups, and instances with generated
+              # names.
+              - Effect: Allow
+                Action:
+                  - ec2:AttachVolume
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:CopyImage
+                  - ec2:CreateImage
+                  - ec2:CreateKeyPair
+                  - ec2:CreateSecurityGroup
+                  - ec2:CreateSnapshot
+                  - ec2:CreateTags
+                  - ec2:CreateVolume
+                  - ec2:DeleteKeyPair
+                  - ec2:DeleteSecurityGroup
+                  - ec2:DeleteSnapshot
+                  - ec2:DeleteVolume
+                  - ec2:DeregisterImage
+                  - ec2:DescribeImageAttribute
+                  - ec2:DescribeImages
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeRegions
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeTags
+                  - ec2:DescribeVolumes
+                  - ec2:DetachVolume
+                  - ec2:GetPasswordData
+                  - ec2:ModifyImageAttribute
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:ModifySnapshotAttribute
+                  - ec2:RegisterImage
+                  - ec2:RunInstances
+                  - ec2:StopInstances
+                  - ec2:TerminateInstances
+                Resource: '*'
+        - PolicyName: PackerConfigRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The run-packer component downloads the configuration -
+              # without this, its S3Download step fails with AccessDenied.
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub '${ConfigBucket.Arn}/packer/*'
+              # S3Download lists with the bare prefix ("packer", no
+              # slash), so the condition must match both forms.
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ConfigBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: 'packer*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/packer-build
+      RetentionInDays: 30
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/packer-build
+      RetentionInDays: 30
+
+  # ---------------------------------------------------------------------
+  # Installs the pinned Packer release. Verification uses the SHA256SUMS
+  # file published next to the release artifact.
+  # ---------------------------------------------------------------------
+  InstallPackerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: packer-build-install-packer
+      # Creating a component needs a concrete version (x wildcards are for
+      # references). The service increments the build number behind the
+      # same version when the document changes, and the recipe's
+      # LatestVersion reference picks that up.
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: install-packer
+        description: Downloads a pinned Packer release, verifies its checksum, and installs it.
+        schemaVersion: 1.0
+        parameters:
+          - packerVersion:
+              type: string
+              default: 1.16.0
+              description: Packer release to install.
+        phases:
+          - name: build
+            steps:
+              - name: InstallPacker
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      # Components run as root without HOME, and Packer -
+                      # even packer version - refuses to start without one.
+                      export HOME=/root
+                      VERSION='{{ packerVersion }}'
+                      cd /var/tmp
+                      curl -fsSLo packer.zip "https://releases.hashicorp.com/packer/${VERSION}/packer_${VERSION}_linux_amd64.zip"
+                      curl -fsSLo packer_SHA256SUMS "https://releases.hashicorp.com/packer/${VERSION}/packer_${VERSION}_SHA256SUMS"
+                      grep "packer_${VERSION}_linux_amd64.zip" packer_SHA256SUMS | sed 's/ .*/  packer.zip/' | sha256sum -c -
+                      dnf install -y -q unzip
+                      unzip -oq packer.zip packer -d /usr/local/bin
+                      rm -f packer.zip packer_SHA256SUMS
+                      /usr/local/bin/packer version
+
+  # ---------------------------------------------------------------------
+  # Downloads the Packer configuration from S3 and runs it. The build
+  # instance's region, subnet, and IP are exported as environment
+  # variables a template can use to place its short-lived instance next
+  # to the build instance - using them is optional. After the build it
+  # tags the new AMI and snapshots with CreatedBy: EC2 Image Builder
+  # (required by the execution and lifecycle policies) and records the
+  # AMI ID where the workflow's RunCommand step reads it back.
+  # ---------------------------------------------------------------------
+  RunPackerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: packer-build-run-packer
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: run-packer
+        description: Downloads a Packer configuration from S3, runs the build, tags the output AMI, and records its ID.
+        schemaVersion: 1.0
+        parameters:
+          - configSource:
+              type: string
+              description: S3 URI of the Packer configuration, ending in /* so auxiliary files download too.
+        phases:
+          - name: build
+            steps:
+              - name: CreateWorkingDirectory
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - rm -rf /var/tmp/packer-work && mkdir -p /var/tmp/packer-work
+              - name: DownloadConfig
+                action: S3Download
+                inputs:
+                  - source: '{{ configSource }}'
+                    destination: /var/tmp/packer-work/
+              - name: RunPackerBuild
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      # Components run as root without HOME, and Packer
+                      # refuses to start without one (it needs a config
+                      # directory).
+                      export HOME=/root
+                      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+                      imds() { curl -sH "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/$1"; }
+                      MAC=$(imds network/interfaces/macs/ | head -n1 | tr -d /)
+                      export AWS_REGION=$(imds placement/region)
+                      export IMAGEBUILDER_SUBNET_ID=$(imds "network/interfaces/macs/${MAC}/subnet-id")
+                      export IMAGEBUILDER_BUILD_IP=$(imds local-ipv4)
+                      cd /var/tmp/packer-work
+                      packer init .
+                      packer validate .
+                      packer build -machine-readable . | tee packer-build.log
+              - name: PublishImageId
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+                      export AWS_DEFAULT_REGION=$(curl -sH "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+                      cd /var/tmp/packer-work
+                      # Machine-readable artifact lines look like
+                      # <timestamp>,<build>,artifact,0,id,<region>:<ami-id>.
+                      AMI_ID=$(grep ',artifact,0,id,' packer-build.log | tail -n1 | cut -d, -f6 | cut -d: -f2)
+                      case "$AMI_ID" in
+                        ami-*) ;;
+                        *) echo "No AMI ID found in Packer output: '$AMI_ID'"; exit 1 ;;
+                      esac
+                      SNAPSHOT_IDS=$(aws ec2 describe-images --image-ids "$AMI_ID" --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' --output text)
+                      aws ec2 create-tags --resources "$AMI_ID" $SNAPSHOT_IDS --tags 'Key=CreatedBy,Value=EC2 Image Builder'
+                      echo "$AMI_ID" | tee /var/tmp/packer-ami-id.txt
+
+  # ---------------------------------------------------------------------
+  # Runs on the test instance - which the test stage launches from the
+  # Packer-built AMI - and proves the customization Packer applied is
+  # really in the image.
+  # ---------------------------------------------------------------------
+  VerifyPackerImageComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: packer-build-verify-image
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: verify-packer-image
+        description: Verifies the Packer provisioner's changes are present in the output AMI.
+        schemaVersion: 1.0
+        phases:
+          - name: test
+            steps:
+              - name: VerifyMarkerFile
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - test -f /etc/packer-built.txt
+                    - cat /etc/packer-built.txt
+
+  # ---------------------------------------------------------------------
+  # The custom build workflow. The service adopts whatever AMI ID the
+  # workflow exposes through its ImageId output - the managed build-image
+  # workflow ends with the same output, fed from its CreateImage step;
+  # here it comes from the file the run-packer component wrote. The
+  # RunCommand step's output list carries each command's stdout, so the
+  # cat must be the only thing that prints.
+  # ---------------------------------------------------------------------
+  BuildWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: packer-build
+      # Workflows version like components: concrete at creation, x
+      # wildcards when referencing.
+      Version: 1.0.0
+      Type: BUILD
+      Data: |
+        name: packer-build
+        description: Runs the recipe's components - which build an AMI with Packer - and adopts that AMI as the image's output.
+        schemaVersion: 1.0
+
+        steps:
+          - name: LaunchBuildInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: "ssmAgent"
+
+          - name: ApplyBuildComponents
+            action: ExecuteComponents
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: GetPackerImageId
+            action: RunCommand
+            onFailure: Abort
+            inputs:
+              documentName: "AWS-RunShellScript"
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+              parameters:
+                commands:
+                  - cat /var/tmp/packer-ami-id.txt
+
+          - name: TerminateBuildInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+        outputs:
+          - name: "ImageId"
+            value: "$.stepOutputs.GetPackerImageId.output[0]"
+
+  # ---------------------------------------------------------------------
+  # The recipe's parent image is the Packer host, not the image being
+  # produced - Packer picks its own source AMI inside the template. The
+  # host just needs Packer's prerequisites: outbound internet and the
+  # instance profile.
+  # ---------------------------------------------------------------------
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: packer-build
+      # x auto-increments the build version, so updates that replace the
+      # recipe never collide with an existing name + version pair.
+      Version: 1.0.x
+      # x.x.x resolves to the latest release of the managed parent image
+      # at build time.
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      Components:
+        - ComponentArn: !GetAtt InstallPackerComponent.LatestVersion.Arn
+          Parameters:
+            - Name: packerVersion
+              Value:
+                - !Ref PackerVersion
+        - ComponentArn: !GetAtt RunPackerComponent.LatestVersion.Arn
+          Parameters:
+            - Name: configSource
+              Value:
+                - !Sub 's3://${ConfigBucket}/packer/*'
+        - ComponentArn: !GetAtt VerifyPackerImageComponent.LatestVersion.Arn
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: packer-build
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - t3.medium
+      InstanceMetadataOptions:
+        HttpTokens: required
+      # Build instances launch in the account's default VPC. Without a
+      # default VPC, set SubnetId and SecurityGroupIds here - both are
+      # required together.
+
+  # ---------------------------------------------------------------------
+  # Distribution operates on the adopted AMI like on any other build. The
+  # build-region AMI already exists under the name Packer gave it, so the
+  # Name here applies only to copies; the tags and the optional launch
+  # permission apply in place - which is what the CreatedBy tag from the
+  # run-packer component unlocks.
+  # ---------------------------------------------------------------------
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: packer-build
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: 'packer-build-{{ imagebuilder:buildDate }}'
+            AmiTags:
+              BuiltWith: packer
+            LaunchPermissionConfiguration: !If
+              - HasLaunchAccount
+              - UserIds:
+                  - !Ref LaunchPermissionAccountId
+              - !Ref AWS::NoValue
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: packer-build
+      Description: Builds an AMI with Packer and runs it through Image Builder's test and distribution stages.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      # Enhanced metadata is collected on the build instance - here that's
+      # the packer host, not the image being produced - so it's off.
+      EnhancedImageMetadataEnabled: false
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      # Setting Workflows replaces the defaults: the custom build workflow
+      # runs first, then the Amazon-managed test workflow launches a test
+      # instance from the packer-built AMI. Nothing is appended
+      # automatically - omit the test entry and no test stage runs.
+      Workflows:
+        - WorkflowArn: !GetAtt BuildWorkflow.Arn
+        - WorkflowArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:workflow/test/test-image/x.x.x'
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  ConfigBucketName:
+    Description: Bucket the packer configuration is uploaded to, under packer/.
+    Value: !Ref ConfigBucket
