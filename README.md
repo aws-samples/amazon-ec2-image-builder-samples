@@ -6,7 +6,7 @@ This repository is maintained by the EC2 Image Builder service team. Samples are
 
 ## Start here
 
-New to Image Builder? Build your first image from the console using the [Get started tutorial](https://docs.aws.amazon.com/imagebuilder/latest/userguide/getting-started-image-builder.html) - it's the fastest way to understand the pipeline / recipe / component model before picking up infrastructure-as-code.
+New to Image Builder? Build your first image from the console using the [pipeline wizard tutorial](https://docs.aws.amazon.com/imagebuilder/latest/userguide/start-build-image-pipeline.html) - it's the fastest way to understand the pipeline / recipe / component model before picking up infrastructure-as-code.
 
 From there:
 
