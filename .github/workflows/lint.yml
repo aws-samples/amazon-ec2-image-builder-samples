@@ -37,7 +37,7 @@ jobs:
       - name: Run cfn-lint
         if: steps.changed.outputs.count != '0'
         run: |
-          pip install cfn-lint==1.55.1
+          pip install cfn-lint==1.59.0
           xargs -0 -r cfn-lint --non-zero-exit-code error < changed.txt
 
   # awstoe validates a document against one OS's action modules, and the

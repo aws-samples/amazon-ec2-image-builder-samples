@@ -1,5 +1,8 @@
 # EC2 Image Builder — ASG Warm Pool
 
+> [!NOTE]
+> **This sample is superseded by [parent-instance-asg](../../../parent-instance-asg/).** Image Builder can take build instances from an Auto Scaling group itself: you set `ParentInstance` on the infrastructure configuration and give the pipeline's execution role permission to use the group. That replaces the custom workflow, the Lambda functions, and the DynamoDB lock table below. The new sample comes in CloudFormation and CDK and includes [migration steps](../../../parent-instance-asg/README.md#migrating-from-accelerated-build-asg) from this one. This sample is kept for reference only.
+
 CDK TypeScript application that provisions an accelerated EC2 Image Builder pipeline. Build instances are pre-warmed in an Auto Scaling Group, eliminating cold-start launch time.
 
 ## Architecture

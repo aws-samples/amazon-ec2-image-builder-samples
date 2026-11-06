@@ -1,0 +1,269 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder parent instance from an Auto Scaling group: builds start on
+  an instance that's already running in a pool, instead of waiting for Image
+  Builder to launch one. The pool is an Auto Scaling group of Amazon Linux 2023
+  instances; the infrastructure configuration points at it, and the pipeline's
+  execution role has the permissions to take an instance from it.
+
+Parameters:
+  Architecture:
+    Type: String
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - arm64
+    Description: >-
+      Target architecture for the image. Switches the pool's AMI, the pool's
+      instance type, and the recipe's parent image together (x86_64 runs on
+      t3.medium, arm64 runs on t4g.medium Graviton). Image Builder only takes
+      an instance whose architecture matches the image.
+
+  PoolSize:
+    Type: Number
+    Default: 1
+    AllowedValues: [1, 2, 3, 4]
+    Description: >-
+      Number of instances kept running and ready in the pool. Each build takes
+      one; the group then launches a replacement. Set this to the number of
+      builds you run at the same time.
+
+  CapacityWaitTimeoutSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 0
+    MaxValue: 3600
+    Description: >-
+      How long a build waits for a ready instance when the pool is empty -
+      for example while the group's replacement instance is still starting.
+      With 0, the build fails right away when no instance is ready. Image
+      Builder doesn't fall back to launching its own instance.
+
+  MaxInstanceLifetimeSeconds:
+    Type: Number
+    Default: 604800
+    AllowedValues: [0, 86400, 604800, 2592000]
+    Description: >-
+      Replace a pool instance that no build has taken once it's this old, so
+      idle instances don't stay on an aging AMI: 86400 (1 day), 604800
+      (7 days), or 2592000 (30 days). 0 turns this off.
+
+Conditions:
+  IsArm64: !Equals [!Ref Architecture, arm64]
+  HasMaxInstanceLifetime: !Not [!Equals [!Ref MaxInstanceLifetimeSeconds, 0]]
+
+Mappings:
+  # Twice PoolSize, so replacements can launch before the old instance ends.
+  # To allow a PoolSize above 4, add a row here and to PoolSize AllowedValues.
+  PoolMaxSize:
+    '1': {MaxSize: 2}
+    '2': {MaxSize: 4}
+    '3': {MaxSize: 6}
+    '4': {MaxSize: 8}
+
+Resources:
+  # Pool instances get this profile from the launch template, test instances
+  # from the infrastructure configuration. AmazonSSMManagedInstanceCore lets
+  # the SSM Agent come online.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Path: /executionServiceEC2Role/
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /executionServiceEC2Role/
+      Roles:
+        - !Ref InstanceRole
+
+  # A taken instance keeps everything it was launched with, so this template
+  # decides what the build runs on - not the recipe or infrastructure
+  # configuration.
+  PoolLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: parent-instance-asg-cfn
+      LaunchTemplateData:
+        # Resolved by EC2 at each launch, so replacements get the current AMI.
+        ImageId: !Sub
+          - 'resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-${Arch}'
+          - Arch: !If [IsArm64, arm64, x86_64]
+        InstanceType: !If [IsArm64, t4g.medium, t3.medium]
+        IamInstanceProfile:
+          Arn: !GetAtt InstanceProfile.Arn
+        MetadataOptions:
+          HttpTokens: required
+        # The image is created from this volume; the recipe's block device
+        # mappings don't apply.
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 30
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+
+  PoolAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    # Stack updates that change the launch template replace the pool's
+    # instances, launching new ones before terminating the old.
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref PoolSize
+        MaxBatchSize: !Ref PoolSize
+    Properties:
+      AutoScalingGroupName: parent-instance-asg-cfn-pool
+      LaunchTemplate:
+        LaunchTemplateId: !Ref PoolLaunchTemplate
+        Version: !GetAtt PoolLaunchTemplate.LatestVersionNumber
+      # Image Builder detaches without lowering desired capacity, so the group
+      # backfills.
+      MinSize: !Ref PoolSize
+      MaxSize: !FindInMap [PoolMaxSize, !Ref PoolSize, MaxSize]
+      DesiredCapacity: !Ref PoolSize
+      MaxInstanceLifetime: !If [HasMaxInstanceLifetime, !Ref MaxInstanceLifetimeSeconds, !Ref AWS::NoValue]
+      # Launch each replacement before terminating, so the pool never empties.
+      InstanceMaintenancePolicy:
+        MinHealthyPercentage: 100
+        MaxHealthyPercentage: 200
+      # Default VPC. For your own subnets, set VPCZoneIdentifier here and
+      # SubnetId plus SecurityGroupIds on the infrastructure configuration.
+      AvailabilityZones:
+        - !Select [0, !GetAZs '']
+        - !Select [1, !GetAZs '']
+
+  # The service-linked role has no Auto Scaling permissions, so a parent
+  # instance needs an execution role. EC2ImageBuilderExecutionPolicy covers
+  # the describe calls; the rest is scoped to this group.
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+      Policies:
+        - PolicyName: ParentInstanceFromAutoScalingGroup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Tagged before the detach, while the group tag can scope it.
+              - Sid: TagInstanceInASG
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*'
+                Condition:
+                  StringEquals:
+                    'ec2:ResourceTag/aws:autoscaling:groupName': !Ref PoolAutoScalingGroup
+              # No resource-level permissions for this action.
+              - Sid: DescribeASG
+                Effect: Allow
+                Action: autoscaling:DescribeAutoScalingGroups
+                Resource: '*'
+              # Without it, builds fail on DetachInstances with access denied.
+              - Sid: DetachFromASG
+                Effect: Allow
+                Action: autoscaling:DetachInstances
+                Resource: !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${PoolAutoScalingGroup}'
+
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: parent-instance-asg-cfn
+      Version: 1.0.x
+      # Not launched - Image Builder matches pool instances on its platform
+      # and architecture.
+      ParentImage: !Sub
+        - 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/${ImageName}/x.x.x'
+        - ImageName: !If [IsArm64, amazon-linux-2023-arm64, amazon-linux-2023-x86]
+      # Patch first, since a pool instance may have been idle. Add your
+      # components after it.
+      Components:
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/update-linux/x.x.x'
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: parent-instance-asg-cfn
+      # Profile and instance type apply to the test instance; the build
+      # instance comes from the pool.
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - !If [IsArm64, t4g.medium, t3.medium]
+      InstanceMetadataOptions:
+        HttpTokens: required
+      ParentInstance:
+        AutoScalingGroup:
+          Name: !Ref PoolAutoScalingGroup
+          CapacityWaitTimeoutSeconds: !Ref CapacityWaitTimeoutSeconds
+      # Set to false to keep a successful build's instance (stopped).
+      TerminateInstanceOnCompletion: true
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/parent-instance-asg-cfn
+      RetentionInDays: 7
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /aws/imagebuilder/pipeline/parent-instance-asg-cfn
+      RetentionInDays: 7
+
+  # Runs the managed build and test workflows; creating it starts no build.
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: parent-instance-asg-cfn
+      Description: >-
+        Builds Amazon Linux 2023 on an instance taken from an Auto Scaling
+        group.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  AutoScalingGroupName:
+    Description: The Auto Scaling group that build instances are taken from.
+    Value: !Ref PoolAutoScalingGroup
+  BuildLogGroupName:
+    Description: CloudWatch log group for the build logs.
+    Value: !Ref BuildLogGroup

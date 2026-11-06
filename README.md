@@ -36,6 +36,7 @@ From there:
 | [containers](containers/) | Container base images on a weekly pipeline - the build-host-vs-base-image distinction, Dockerfile template variables, ECR tagging strategy, multi-region replication, and a Windows Server 2025 Core variant (CloudFormation, plus a CDK app for the Linux pipeline) |
 | [windows-golden-image](windows-golden-image/) | A monthly Windows Server 2025 golden image - reboot-safe patching through UpdateOS, what the service's sysprep already handles, which customization scopes survive into the AMI, verification on a fresh instance, and optional EC2 Fast Launch |
 | [macos-golden-image](macos-golden-image/) | A customized macOS AMI built on an EC2 Mac Dedicated Host - the placement wiring, optional in-stack host allocation, the 24-hour-minimum cost model, and how one pinned host serves both the build and test phases |
+| [parent-instance-asg](parent-instance-asg/) | Builds that skip the instance launch: a pool of ready instances in an Auto Scaling group, the infrastructure configuration's `ParentInstance` setting, the execution role scoped to the group, and how to size the pool and its capacity wait (CloudFormation and CDK) |
 
 ### CloudFormation - Linux AMIs
 
@@ -56,7 +57,7 @@ From there:
 
 | Sample | What it shows |
 |---|---|
-| [accelerated-build-asg](CDK/Linux/accelerated-build-asg/) | Accelerated builds using pre-warmed instances in an Auto Scaling group, with custom image workflows and `WaitForAction` steps |
+| [accelerated-build-asg](CDK/Linux/accelerated-build-asg/) | Pre-warmed instances in an Auto Scaling group with custom image workflows and `WaitForAction` steps - superseded by [parent-instance-asg](parent-instance-asg/), which uses Image Builder's built-in support |
 | [hello-world](CDK/Linux/hello-world/) | Configuration-driven pipelines in CDK TypeScript: components loaded from local files or managed component ARNs, SNS build notifications, and the output AMI ID recorded in an SSM parameter |
 
 ### Components (AWSTOE)
