@@ -1,0 +1,678 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  EC2 Image Builder pipeline that builds a Bottlerocket AMI from source: a
+  custom build workflow runs the Bottlerocket build (Twoliter, driven by
+  cargo make) on an Amazon Linux 2023 build instance, hands the registered
+  AMI back to the service through the workflow's ImageId output, and a
+  custom test workflow boots it and checks it through the Bottlerocket API
+  before distribution.
+
+Parameters:
+  Variant:
+    Type: String
+    Default: aws-ecs-2
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]*$'
+    Description: >-
+      Bottlerocket variant to build, for example aws-ecs-2 or aws-k8s-1.35.
+      A custom variant uploaded under bottlerocket/ in the configuration
+      bucket works too.
+  Arch:
+    Type: String
+    Default: x86_64
+    AllowedValues:
+      - x86_64
+      - aarch64
+    Description: >-
+      Architecture of the Bottlerocket image. The x86_64 build instance
+      cross-compiles aarch64 images inside the build SDK.
+  BottlerocketRelease:
+    Type: String
+    Default: 1.70.0
+    AllowedPattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    Description: >-
+      Bottlerocket release to build, checked out from the v<release> tag of
+      github.com/bottlerocket-os/bottlerocket.
+  CargoMakeVersion:
+    Type: String
+    Default: 0.37.24
+    AllowedPattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    Description: cargo-make release installed from crates.io with its lockfile.
+  BuildInstanceType:
+    Type: String
+    Default: c7i.4xlarge
+    Description: >-
+      Build instance type - an x86_64 type for either Arch. The build
+      compiles inside containers and scales with vCPUs.
+  TestInstanceType:
+    Type: String
+    Default: ''
+    Description: >-
+      Instance type the test workflow boots the Bottlerocket AMI on - it
+      must match Arch. Empty picks t3.small for x86_64 and t4g.small for
+      aarch64.
+  SubnetId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^subnet-[0-9a-f]+$'
+    Description: >-
+      Optional subnet for the build and test instances, set together with
+      SecurityGroupId. Empty uses the default VPC. The subnet needs
+      outbound internet access.
+  SecurityGroupId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^sg-[0-9a-f]+$'
+    Description: >-
+      Optional security group for the build and test instances, set
+      together with SubnetId. No inbound rules are needed.
+  LaunchPermissionAccountId:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[0-9]{12}$'
+    Description: >-
+      Optional account ID granted permission to launch the output AMI
+      through the distribution configuration. Share only with accounts you
+      trust - the grantee can read the image contents. Leave empty to skip.
+
+Rules:
+  SubnetAndSecurityGroupsTogether:
+    Assertions:
+      - Assert: !Or
+          - !And [!Equals [!Ref SubnetId, ''], !Equals [!Ref SecurityGroupId, '']]
+          - !And [!Not [!Equals [!Ref SubnetId, '']], !Not [!Equals [!Ref SecurityGroupId, '']]]
+        AssertDescription: Set SubnetId and SecurityGroupId together, or neither
+
+Conditions:
+  HasLaunchAccount: !Not [!Equals [!Ref LaunchPermissionAccountId, '']]
+  HasTestInstanceType: !Not [!Equals [!Ref TestInstanceType, '']]
+  IsArm: !Equals [!Ref Arch, aarch64]
+  HasSubnet: !Not [!Equals [!Ref SubnetId, '']]
+
+Resources:
+  # ---------------------------------------------------------------------
+  # Optional overlay: everything under bottlerocket/ is copied over the
+  # Bottlerocket checkout before the build, and bottlerocket/customize.sh
+  # runs if present - that's where a custom variant gets defined.
+  # ---------------------------------------------------------------------
+  ConfigBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ConfigBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ConfigBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyPlaintextAccess
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ConfigBucket.Arn
+              - !Sub '${ConfigBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: DenyOldTlsVersions
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ConfigBucket.Arn
+              - !Sub '${ConfigBucket.Arn}/*'
+            Condition:
+              NumericLessThan:
+                s3:TlsVersion: '1.2'
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - imagebuilder.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2ImageBuilderExecutionPolicy'
+
+  # ---------------------------------------------------------------------
+  # The build instance's role. The Bottlerocket publishing tool uploads the
+  # disk images straight into EBS snapshots through the EBS direct APIs and
+  # registers the AMI with these credentials.
+  # ---------------------------------------------------------------------
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: RegisterBottlerocketAmi
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Without these, pubsys (cargo make ami) fails registering the
+              # AMI. The IDs are generated during the upload, so they can't be scoped.
+              - Effect: Allow
+                Action:
+                  - ebs:StartSnapshot
+                  - ebs:PutSnapshotBlock
+                  - ebs:CompleteSnapshot
+                  - ec2:RegisterImage
+                  - ec2:DescribeImages
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeRegions
+                Resource: '*'
+              # The build tags its own AMI and snapshots with CreatedBy: EC2
+              # Image Builder, which distribution and lifecycle require.
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}::image/*'
+                  - !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}::snapshot/*'
+                Condition:
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - CreatedBy
+                      - BottlerocketVariant
+                  # Only resources that aren't Image Builder's yet - the role
+                  # can't relabel AMIs another pipeline already owns.
+                  'Null':
+                    aws:ResourceTag/CreatedBy: 'true'
+        - PolicyName: BottlerocketTestInstanceBoot
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The test instance runs under this profile too. Bottlerocket
+              # pulls its control container from a private ECR repository at
+              # boot - without these, the SSM agent never starts.
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              # Bottlerocket's host-container registry account differs by
+              # Region, so the account is a wildcard.
+              - Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ecr:${AWS::Region}:*:repository/bottlerocket-*'
+              # Kubernetes variants look up their own instance at boot to
+              # derive node settings, and wait until the call succeeds.
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                Resource: '*'
+        - PolicyName: OverlayRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Without these, ApplyOverlay fails on aws s3 cp with
+              # AccessDenied.
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub '${ConfigBucket.Arn}/bottlerocket/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ConfigBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: 'bottlerocket/*'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  BuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/imagebuilder/${AWS::StackName}'
+      RetentionInDays: 30
+
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/imagebuilder/pipeline/${AWS::StackName}'
+      RetentionInDays: 30
+
+  # ---------------------------------------------------------------------
+  # The build host's toolchain. Every compile runs inside the Bottlerocket
+  # SDK container, so the host needs Docker, git, Rust, and cargo-make.
+  # ---------------------------------------------------------------------
+  InstallBuildToolsComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${AWS::StackName}-install-tools'
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: install-bottlerocket-build-tools
+        description: Installs Docker, git, and Rust from the Amazon Linux repositories, and a pinned cargo-make release from crates.io.
+        schemaVersion: 1.0
+        parameters:
+          - cargoMakeVersion:
+              type: string
+              default: 0.37.24
+              description: cargo-make release to install.
+        phases:
+          - name: build
+            steps:
+              - name: InstallPackages
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      dnf install -y -q docker git gcc gcc-c++ make openssl-devel pkgconf-pkg-config lz4 xz tar jq rust cargo
+                      systemctl enable --now docker
+              - name: InstallCargoMake
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      # Components run as root without HOME; cargo needs one.
+                      export HOME=/root PATH="/root/.cargo/bin:${PATH}"
+                      CARGO_MAKE_VERSION=$(cat <<'BOTTLEROCKET_PARAM'
+                      {{ cargoMakeVersion }}
+                      BOTTLEROCKET_PARAM
+                      )
+                      [[ "${CARGO_MAKE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid cargo-make version"; exit 1; }
+                      cargo install --locked --quiet cargo-make --version "${CARGO_MAKE_VERSION}"
+                      cargo make --version
+
+  # ---------------------------------------------------------------------
+  # Builds the variant and registers it as an AMI in the build region,
+  # then tags the AMI and its snapshots and records the AMI ID where the
+  # workflow's RunCommand step reads it back.
+  # ---------------------------------------------------------------------
+  BuildBottlerocketComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub '${AWS::StackName}-build-variant'
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: build-bottlerocket-variant
+        description: Builds a Bottlerocket variant from source and registers it as an AMI.
+        schemaVersion: 1.0
+        parameters:
+          - variant:
+              type: string
+              description: Bottlerocket variant to build.
+          - release:
+              type: string
+              description: Bottlerocket release tag to check out, without the leading v.
+          - arch:
+              type: string
+              description: Image architecture, x86_64 or aarch64.
+          - overlaySource:
+              type: string
+              description: S3 URI of the overlay prefix copied over the checkout.
+        phases:
+          - name: build
+            steps:
+              - name: CheckoutSource
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      # Quoted heredocs keep quotes and $( ) in parameter values from
+                      # being parsed as shell; the template's AllowedPattern values
+                      # are the boundary. Validated values are saved for later steps.
+                      RELEASE=$(cat <<'BOTTLEROCKET_PARAM'
+                      {{ release }}
+                      BOTTLEROCKET_PARAM
+                      )
+                      ARCH=$(cat <<'BOTTLEROCKET_PARAM'
+                      {{ arch }}
+                      BOTTLEROCKET_PARAM
+                      )
+                      VARIANT=$(cat <<'BOTTLEROCKET_PARAM'
+                      {{ variant }}
+                      BOTTLEROCKET_PARAM
+                      )
+                      OVERLAY=$(cat <<'BOTTLEROCKET_PARAM'
+                      {{ overlaySource }}
+                      BOTTLEROCKET_PARAM
+                      )
+                      [[ "${RELEASE}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release"; exit 1; }
+                      [[ "${ARCH}" =~ ^(x86_64|aarch64)$ ]] || { echo "Invalid arch"; exit 1; }
+                      [[ "${VARIANT}" =~ ^[a-z0-9][a-z0-9.-]*$ && "${VARIANT}" != *..* ]] || { echo "Invalid variant"; exit 1; }
+                      [[ "${OVERLAY}" =~ ^s3://[a-z0-9][a-z0-9.-]*/bottlerocket/$ ]] || { echo "Invalid overlay source"; exit 1; }
+                      printf 'RELEASE=%q\nARCH=%q\nVARIANT=%q\nOVERLAY=%q\n' "${RELEASE}" "${ARCH}" "${VARIANT}" "${OVERLAY}" > /var/tmp/bottlerocket-build.env
+                      rm -rf /var/tmp/bottlerocket
+                      git -c advice.detachedHead=false clone --quiet --depth 1 --branch "v${RELEASE}" https://github.com/bottlerocket-os/bottlerocket.git /var/tmp/bottlerocket
+                      git -C /var/tmp/bottlerocket log -1 --format='%H %s'
+              - name: ApplyOverlay
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      source /var/tmp/bottlerocket-build.env
+                      cd /var/tmp/bottlerocket
+                      # Files land at the same paths as in the checkout.
+                      aws s3 cp --recursive --only-show-errors "${OVERLAY}" .
+                      if [ -f customize.sh ]; then
+                        bash customize.sh
+                      else
+                        echo "No customize.sh in the overlay - building the variant as published."
+                      fi
+                      test -d "variants/${VARIANT}" || { echo "Variant ${VARIANT} not found in the checkout"; exit 1; }
+                      # Variants without their own AMI properties get pubsys defaults
+                      # (gp2, IMDSv1 allowed). This writes the same settings as the
+                      # upstream variants/shared/amispec-split.toml - IMDSv2 and gp3.
+                      if [ ! -f "variants/${VARIANT}/amispec.toml" ]; then
+                        printf '%s\n' 'imds-support = "v2.0"' '' \
+                          '[block-device-mappings."/dev/xvda".ebs]' 'volume-type = "gp3"' '' \
+                          '[block-device-mappings."/dev/xvdb".ebs]' 'volume-type = "gp3"' > "variants/${VARIANT}/amispec.toml"
+                      fi
+              - name: BuildImage
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      export HOME=/root PATH="/root/.cargo/bin:${PATH}"
+                      source /var/tmp/bottlerocket-build.env
+                      cd /var/tmp/bottlerocket
+                      cargo make -e BUILDSYS_VARIANT="${VARIANT}" -e BUILDSYS_ARCH="${ARCH}"
+              - name: RegisterAmi
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - |
+                      set -euo pipefail
+                      export HOME=/root PATH="/root/.cargo/bin:${PATH}"
+                      TOKEN=$(curl -fsSX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+                      REGION=$(curl -fsSH "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/placement/region)
+                      export AWS_DEFAULT_REGION="${REGION}"
+                      source /var/tmp/bottlerocket-build.env
+                      # AMI names must be unique - stamp each build, otherwise in the
+                      # same shape as the upstream default name.
+                      AMI_NAME="bottlerocket-${VARIANT}-${ARCH}-v${RELEASE}-$(date -u +%Y%m%d%H%M%S)"
+                      cd /var/tmp/bottlerocket
+                      cargo make -e BUILDSYS_VARIANT="${VARIANT}" -e BUILDSYS_ARCH="${ARCH}" -e PUBLISH_REGIONS="${REGION}" -e PUBLISH_AMI_NAME="${AMI_NAME}" ami
+                      AMI_ID=$(jq -rn --arg r "${REGION}" 'first(inputs | .[$r].id)' build/images/"${ARCH}-${VARIANT}"/latest/*-amis.json)
+                      [[ "${AMI_ID}" =~ ^ami-[0-9a-f]{8,17}$ ]] || { echo "No AMI ID found in the publish output: '${AMI_ID}'"; exit 1; }
+                      SNAPSHOT_IDS=$(aws ec2 describe-images --image-ids "${AMI_ID}" --query 'Images[0].BlockDeviceMappings[].Ebs.SnapshotId' --output text)
+                      aws ec2 create-tags --resources "${AMI_ID}" ${SNAPSHOT_IDS} --tags 'Key=CreatedBy,Value=EC2 Image Builder' "Key=BottlerocketVariant,Value=${VARIANT}"
+                      echo "${AMI_ID}" | tee /var/tmp/bottlerocket-ami-id.txt
+
+  # Workflows version like components: concrete at creation, and the
+  # service increments the build number when the document changes.
+  BuildWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: !Sub '${AWS::StackName}-build'
+      Version: 1.0.0
+      Type: BUILD
+      Data: |
+        name: bottlerocket-build
+        description: Runs the recipe's components - which build and register a Bottlerocket AMI - and adopts that AMI as the image's output.
+        schemaVersion: 1.0
+
+        steps:
+          - name: LaunchBuildInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              waitFor: "ssmAgent"
+
+          - name: ApplyBuildComponents
+            action: ExecuteComponents
+            onFailure: Abort
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+          - name: GetBottlerocketImageId
+            action: RunCommand
+            onFailure: Abort
+            inputs:
+              documentName: "AWS-RunShellScript"
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+              parameters:
+                commands:
+                  - cat /var/tmp/bottlerocket-ami-id.txt
+
+          - name: TerminateBuildInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchBuildInstance.instanceId"
+
+        outputs:
+          - name: "ImageId"
+            value: "$.stepOutputs.GetBottlerocketImageId.output[0]"
+
+  # ---------------------------------------------------------------------
+  # Bottlerocket has no shell on the host, so the test runs commands
+  # through SSM, which lands in the control container, and checks the
+  # image through the Bottlerocket API (apiclient).
+  # ---------------------------------------------------------------------
+  TestWorkflow:
+    Type: AWS::ImageBuilder::Workflow
+    Properties:
+      Name: !Sub '${AWS::StackName}-test'
+      Version: 1.0.0
+      Type: TEST
+      Data: |
+        name: bottlerocket-test
+        description: Boots the Bottlerocket AMI and verifies its variant and settings through the Bottlerocket API.
+        schemaVersion: 1.0
+
+        parameters:
+          - name: variant
+            type: string
+            description: Variant the image must report.
+          - name: arch
+            type: string
+            description: Architecture the image must report.
+          - name: instanceTypes
+            type: stringList
+            description: Instance types for the test instance.
+
+        steps:
+          # Without an override, LaunchInstance passes a shell script as
+          # user data; Bottlerocket reads user data as TOML settings and
+          # stops configuring itself when it can't parse it.
+          - name: LaunchTestInstance
+            action: LaunchInstance
+            onFailure: Abort
+            inputs:
+              instanceTypesOverride.$: "$.parameters.instanceTypes"
+              userDataOverride: |
+                [settings.host-containers.control]
+                enabled = true
+              waitFor: "ssmAgent"
+
+          - name: VerifyImage
+            action: RunCommand
+            onFailure: Abort
+            inputs:
+              documentName: "AWS-RunShellScript"
+              instanceId.$: "$.stepOutputs.LaunchTestInstance.instanceId"
+              parameters:
+                commands:
+                  - |
+                    set -eu
+                    VARIANT=$(cat <<'BOTTLEROCKET_PARAM'
+                    {{ $.parameters.variant }}
+                    BOTTLEROCKET_PARAM
+                    )
+                    ARCH=$(cat <<'BOTTLEROCKET_PARAM'
+                    {{ $.parameters.arch }}
+                    BOTTLEROCKET_PARAM
+                    )
+                    case "${VARIANT}" in ''|.*|-*|*..*|*[!a-z0-9.-]*) echo "Invalid variant"; exit 1 ;; esac
+                    case "${ARCH}" in x86_64|aarch64) ;; *) echo "Invalid arch"; exit 1 ;; esac
+                    apiclient get os
+                    test "$(apiclient get os | jq -r .os.variant_id)" = "${VARIANT}"
+                    test "$(apiclient get os | jq -r .os.arch)" = "${ARCH}"
+                    apiclient get settings.host-containers.control.enabled | jq -e '.settings["host-containers"].control.enabled == true'
+
+          - name: TerminateTestInstance
+            action: TerminateInstance
+            onFailure: Continue
+            inputs:
+              instanceId.$: "$.stepOutputs.LaunchTestInstance.instanceId"
+
+  # ---------------------------------------------------------------------
+  # The parent image is the build host, not the image being produced. The
+  # build needs well over the default root volume for the SDK image, the
+  # kits, and the build tree.
+  # ---------------------------------------------------------------------
+  ImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: !Ref AWS::StackName
+      Version: 1.0.x
+      ParentImage: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-x86/x.x.x'
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 100
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      Components:
+        - ComponentArn: !GetAtt InstallBuildToolsComponent.LatestVersion.Arn
+          Parameters:
+            - Name: cargoMakeVersion
+              Value:
+                - !Ref CargoMakeVersion
+        - ComponentArn: !GetAtt BuildBottlerocketComponent.LatestVersion.Arn
+          Parameters:
+            - Name: variant
+              Value:
+                - !Ref Variant
+            - Name: release
+              Value:
+                - !Ref BottlerocketRelease
+            - Name: arch
+              Value:
+                - !Ref Arch
+            - Name: overlaySource
+              Value:
+                - !Sub 's3://${ConfigBucket}/bottlerocket/'
+
+  InfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    # The linter can't see that HasSubnet and the rule guarantee a real
+    # security group ID wherever one is used.
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W1030
+    Properties:
+      Name: !Ref AWS::StackName
+      InstanceProfileName: !Ref InstanceProfile
+      InstanceTypes:
+        - !Ref BuildInstanceType
+      SubnetId: !If [HasSubnet, !Ref SubnetId, !Ref AWS::NoValue]
+      SecurityGroupIds: !If
+        - HasSubnet
+        - [!Ref SecurityGroupId]
+        - !Ref AWS::NoValue
+      InstanceMetadataOptions:
+        HttpTokens: required
+
+  DistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !Ref AWS::StackName
+      Distributions:
+        - Region: !Ref AWS::Region
+          AmiDistributionConfiguration:
+            Name: !Sub '${AWS::StackName}-{{ imagebuilder:buildDate }}'
+            AmiTags:
+              BuiltWith: bottlerocket-twoliter
+            LaunchPermissionConfiguration: !If
+              - HasLaunchAccount
+              - UserIds:
+                  - !Ref LaunchPermissionAccountId
+              - !Ref AWS::NoValue
+
+  ImagePipeline:
+    Type: AWS::ImageBuilder::ImagePipeline
+    Properties:
+      Name: !Ref AWS::StackName
+      Description: Builds a Bottlerocket AMI from source and runs it through Image Builder's test and distribution stages.
+      ImageRecipeArn: !Ref ImageRecipe
+      InfrastructureConfigurationArn: !Ref InfrastructureConfiguration
+      DistributionConfigurationArn: !Ref DistributionConfiguration
+      ExecutionRole: !GetAtt ExecutionRole.Arn
+      # Enhanced metadata is collected on the build instance - the Amazon
+      # Linux build host, not the Bottlerocket image - so it's off.
+      EnhancedImageMetadataEnabled: false
+      LoggingConfiguration:
+        ImageLogGroupName: !Ref BuildLogGroup
+        PipelineLogGroupName: !Ref PipelineLogGroup
+      Workflows:
+        - WorkflowArn: !GetAtt BuildWorkflow.Arn
+        - WorkflowArn: !GetAtt TestWorkflow.Arn
+          Parameters:
+            - Name: variant
+              Value:
+                - !Ref Variant
+            - Name: arch
+              Value:
+                - !Ref Arch
+            - Name: instanceTypes
+              Value:
+                - !If
+                  - HasTestInstanceType
+                  - !Ref TestInstanceType
+                  - !If [IsArm, t4g.small, t3.small]
+
+Outputs:
+  ImagePipelineArn:
+    Description: >-
+      ARN of the image pipeline. Start a build with 'aws imagebuilder
+      start-image-pipeline-execution --image-pipeline-arn <this value>'.
+    Value: !Ref ImagePipeline
+  ConfigBucketName:
+    Description: Bucket for the optional overlay, under bottlerocket/.
+    Value: !Ref ConfigBucket
