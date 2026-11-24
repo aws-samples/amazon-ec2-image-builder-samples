@@ -1,0 +1,49 @@
+# Derived from bottlerocket-os/bottlerocket v1.70.0 variants/aws-ecs-2/Cargo.toml
+# (Apache-2.0 OR MIT). Changes: the package name and the panic=10 kernel parameter.
+[package]
+name = "aws-ecs-2-custom"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "../build.rs"
+# Don't rebuild crate just because of changes to README.
+exclude = ["README.md"]
+
+[package.metadata.build-variant.image-features]
+grub-set-private-var = true
+uefi-secure-boot = true
+xfs-data-partition = true
+erofs-root-partition = true
+systemd-networkd = true
+
+[package.metadata.build-variant]
+included-packages = [
+# core
+    "release",
+    "kernel-6.1",
+    "containerd-2.3",
+    "whippet",
+# docker
+    "docker-cli",
+    "docker-engine",
+    "docker-init",
+# ecs
+    "ecs-agent-config",
+]
+kernel-parameters = [
+    "console=tty0",
+    "console=ttyS0,115200n8",
+    "net.ifnames=0",
+    "netdog.default-interface=eth0:dhcp4,dhcp6?",
+    "quiet",
+    # Reboot 10 seconds after a kernel panic.
+    "panic=10",
+]
+
+[lib]
+path = "../variants.rs"
+
+[build-dependencies]
+settings-defaults = { path = "../../packages/settings-defaults" }
+settings-plugins = { path = "../../packages/settings-plugins" }
+settings-migrations = { path = "../../packages/settings-migrations" }

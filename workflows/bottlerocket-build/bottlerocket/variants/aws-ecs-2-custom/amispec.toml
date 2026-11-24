@@ -1,0 +1,10 @@
+# Derived from bottlerocket-os/bottlerocket v1.70.0 variants/shared/amispec-split.toml
+# (Apache-2.0 OR MIT). pubsys reads it when the build registers the AMI.
+# https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html
+imds-support = "v2.0"
+
+[block-device-mappings."/dev/xvda".ebs]
+volume-type = "gp3"
+
+[block-device-mappings."/dev/xvdb".ebs]
+volume-type = "gp3"
